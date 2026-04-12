@@ -1,9 +1,9 @@
 [package]
 name = "xad-rs"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.85"
-authors = ["Sercan Atalik <sercan@atalik.com>"]
+authors = ["Sercan Atalik"]
 description = "Exact automatic differentiation for Rust — forward-mode, reverse-mode, first- and second-order, with named variable support for ergonomic gradient readback"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/sercanatalik/xad-rs"
