@@ -1,0 +1,33 @@
+[package]
+name = "xad-rs"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Sercan Atalik <sercan@atalik.com>"]
+description = "Exact automatic differentiation for Rust — forward-mode, reverse-mode, first- and second-order, with named variable support for ergonomic gradient readback"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/sercanatalik/xad-rs"
+homepage = "https://github.com/sercanatalik/xad-rs"
+documentation = "https://docs.rs/xad-rs"
+readme = "README.md"
+keywords = ["autodiff", "derivatives", "adjoint", "dual-numbers", "quant"]
+categories = ["mathematics", "science"]
+exclude = [
+    "/.github/",
+    "/target/",
+    "*.lock",
+]
+
+[lib]
+name = "xad_rs"
+path = "src/lib.rs"
+
+[dependencies]
+num-traits = "0.2"
+indexmap = "2"
+ndarray = "0.16"
+
+[dev-dependencies]
+approx = "0.5"
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]

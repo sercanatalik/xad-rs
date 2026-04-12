@@ -1,0 +1,68 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - name: "slim"
+            flags: "--no-default-features"
+          - name: "labeled"
+            flags: "--no-default-features --features labeled"
+          - name: "dual2-vec"
+            flags: "--no-default-features --features dual2-vec"
+          - name: "labeled-ndarray"
+            flags: "--no-default-features --features labeled-ndarray"
+          - name: "labeled-hessian"
+            flags: "--no-default-features --features labeled-hessian"
+          - name: "all"
+            flags: "--all-features"
+    name: build (${{ matrix.features.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --verbose ${{ matrix.features.flags }}
+      - name: Test
+        run: cargo test --verbose ${{ matrix.features.flags }}
+
+  abi-hygiene:
+    runs-on: ubuntu-latest
+    name: abi-hygiene (slim rlib has no indexmap/ndarray)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build slim rlib
+        run: |
+          cargo clean
+          cargo build --no-default-features --release
+      - name: Verify no indexmap/ndarray in dep graph
+        run: |
+          if cargo tree --no-default-features --edges normal --prefix none \
+             | grep -E '^(indexmap|ndarray|equivalent|hashbrown|matrixmultiply)' ; then
+            echo "FAIL: default-build dep graph contains labeled/dual2-vec deps"
+            exit 1
+          fi
+          echo "OK: dep graph is clean"
+      - name: Verify no indexmap/ndarray symbols in slim rlib
+        run: |
+          RLIB=target/release/libxad_rs.rlib
+          if [ ! -f "$RLIB" ]; then
+            echo "rlib not found at $RLIB"
+            ls -la target/release/
+            exit 1
+          fi
+          if nm -g --defined-only "$RLIB" 2>/dev/null | grep -E '(indexmap|ndarray)'; then
+            echo "FAIL: slim-build rlib contains indexmap or ndarray symbols"
+            exit 1
+          fi
+          echo "OK: slim-build rlib is clean"
