@@ -1,11 +1,8 @@
-//! LBLF-06 cross-check tests for `NamedDual`.
+//! Cross-check tests for `NamedDual`.
 //!
 //! Every test constructs the same expression in both positional and named
 //! form and asserts bit-exact (NOT approximate) equality of value and
 //! gradient. Any drift would be a wrapper bug, not a rounding artifact.
-//!
-//! Migrated to the Shape A `NamedForwardTape` + `declare_dual` +
-//! `freeze_dual` + `scope.dual(handle)` API in Plan 02.2-02 Task 5.
 
 
 use xad_rs::Dual;

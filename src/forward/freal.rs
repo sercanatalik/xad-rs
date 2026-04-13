@@ -723,12 +723,12 @@ impl<T: Scalar> Default for FReal<T> {
 
 // `NamedFReal<T>` — named wrapper over `FReal<T>` (generic forward-mode).
 //
-// **Shape A (Phase 02.2):** does NOT carry an `Arc<VarRegistry>` field in
-// release builds. The struct layout is a single `inner: FReal<T>` field
-// plus, under `#[cfg(debug_assertions)]` only, a `gen_id: u64` stamped by the
-// owning [`NamedForwardTape`] scope for the cross-registry debug guard.
-// Release builds are bit-for-bit equivalent to a pure `FReal<T>` wrapper
-// and carry zero atomic-refcount cost per operator.
+// Does NOT carry an `Arc<VarRegistry>` field in release builds. The struct
+// layout is a single `inner: FReal<T>` field plus, under
+// `#[cfg(debug_assertions)]` only, a `gen_id: u64` stamped by the owning
+// [`NamedForwardTape`] scope for the cross-registry debug guard. Release
+// builds are bit-for-bit equivalent to a pure `FReal<T>` wrapper and carry
+// zero atomic-refcount cost per operator.
 //
 // The only way to obtain a `NamedFReal<T>` is via
 // [`NamedForwardTape::input_freal`] or
@@ -907,8 +907,8 @@ impl<T: Scalar> fmt::Display for NamedFReal<T> {
     }
 }
 
-// ============ Operator overloads — hand-written, Shape A ============
-// No shared op-stamping macro is used: Shape A does not carry an
+// ============ Operator overloads — hand-written ============
+// No shared op-stamping macro is used: the struct does not carry an
 // `Arc` registry field on the per-value wrapper. The four reference
 // variants (owned/owned, ref/ref, owned/ref, ref/owned) plus scalar-RHS
 // variants are stamped explicitly via a local `__named_freal_binop!`

@@ -1,4 +1,4 @@
-//! REG-05 unit tests for `VarRegistry`.
+//! Unit tests for `VarRegistry`.
 //!
 //! Coverage: empty, single-element, multi-element, iteration order,
 //! duplicate handling, Arc::ptr_eq identity, builder-phase insert.
@@ -60,7 +60,7 @@ fn test_iteration_order_is_insertion_not_alphabetical() {
 
 #[test]
 fn test_duplicate_name_idempotent_first_wins() {
-    // REG-04: duplicates return the original index, don't shift others.
+    // Duplicates return the original index, don't shift others.
     let r = VarRegistry::from_names(["x", "y", "x", "z"]);
     assert_eq!(r.len(), 3); // "x" deduped
     assert_eq!(r.index_of("x"), Some(0)); // original position preserved

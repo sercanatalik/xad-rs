@@ -1,8 +1,8 @@
 //! Integration tests for `NamedTape` + `NamedAReal`.
 //!
-//! Covers LBLR-02..10 from REQUIREMENTS.md plus the Phase 2 research-derived
-//! safety tests (sequential tapes, nested freeze panic, multithread
-//! isolation, std::mem::forget recovery, panic-during-forward unwind).
+//! Covers the core named reverse-mode contract plus safety tests (sequential
+//! tapes, nested freeze panic, multithread isolation, std::mem::forget
+//! recovery, panic-during-forward unwind).
 
 
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use xad_rs::NamedTape;
 
-// ---------- LBLR-02: new() does NOT activate ----------
+// ---------- new() does NOT activate ----------
 
 #[test]
 fn test_new_does_not_activate() {
@@ -25,7 +25,7 @@ fn test_new_does_not_activate() {
     let _ = Arc::<()>::new(()); // touch Arc so the import is exercised in this file
 }
 
-// ---------- LBLR-03: input() after freeze() panics ----------
+// ---------- input() after freeze() panics ----------
 
 #[test]
 #[should_panic(expected = "after freeze")]
@@ -36,7 +36,7 @@ fn test_input_after_freeze_panics() {
     let _y = t.input("y", 2.0); // must panic
 }
 
-// ---------- LBLR-04: freeze() returns registry in input-order ----------
+// ---------- freeze() returns registry in input-order ----------
 
 #[test]
 fn test_freeze_returns_registry_in_order() {
@@ -51,7 +51,7 @@ fn test_freeze_returns_registry_in_order() {
     NamedTape::deactivate_all();
 }
 
-// ---------- LBLR-05 + LBLR-08: f(x, y) = x²y + sin(x) ----------
+// ---------- f(x, y) = x²y + sin(x) ----------
 
 #[test]
 fn test_gradient_x2y_plus_sin_x() {
@@ -79,7 +79,7 @@ fn test_gradient_x2y_plus_sin_x() {
     NamedTape::deactivate_all();
 }
 
-// ---------- LBLR-05 negative case: gradient() before freeze() panics ----------
+// ---------- gradient() before freeze() panics ----------
 
 #[test]
 #[should_panic(expected = "before freeze")]
@@ -89,7 +89,7 @@ fn test_gradient_before_freeze_panics() {
     let _ = t.gradient(&x); // must panic
 }
 
-// ---------- LBLR-06: sequential tapes on the same thread ----------
+// ---------- sequential tapes on the same thread ----------
 
 #[test]
 fn test_sequential_tapes_ok() {
@@ -126,7 +126,7 @@ fn test_nested_freeze_panics() {
     // Cleanup never reached, but the test runner will tear down the thread.
 }
 
-// ---------- LBLR-09: multi-threaded isolation ----------
+// ---------- multi-threaded isolation ----------
 
 #[test]
 fn test_multithread_isolation() {
@@ -159,7 +159,7 @@ fn test_multithread_isolation() {
     assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
 
-// ---------- LBLR-10: std::mem::forget recovery ----------
+// ---------- std::mem::forget recovery ----------
 
 #[test]
 fn test_deactivate_all_after_forget() {
@@ -181,7 +181,7 @@ fn test_deactivate_all_after_forget() {
     NamedTape::deactivate_all();
 }
 
-// ---------- LBLR-10 (panic-during-forward): drop-on-unwind path ----------
+// ---------- panic-during-forward: drop-on-unwind path ----------
 
 #[test]
 fn test_panic_during_forward_deactivates() {

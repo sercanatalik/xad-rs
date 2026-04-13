@@ -1,13 +1,10 @@
-//! LBLF-06 cross-check tests for `NamedDual2<f64>`.
+//! Cross-check tests for `NamedDual2<f64>`.
 //!
 //! Unlike `NamedDual` and `NamedFReal`, `NamedDual2` tracks ONE
 //! seeded direction and its second derivative. Tests verify that both
 //! first and second derivative accessors match the positional `Dual2`
 //! for four expressions, and that operations between two differently-
 //! seeded variables panic in debug builds.
-//!
-//! Migrated to the Shape A `NamedForwardTape` + `declare_dual2_f64` +
-//! `freeze_dual` + `scope.dual2(handle)` API in Plan 02.2-02 Task 5.
 
 
 use xad_rs::Dual2;

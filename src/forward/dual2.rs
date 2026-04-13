@@ -24,7 +24,7 @@
 //! This module also contains [`NamedDual2<T>`] — a named wrapper over
 //! seeded `Dual2<T>`.
 //!
-//! **Shape A (Phase 02.2):** does NOT carry an `Arc<VarRegistry>` field in
+//! Does NOT carry an `Arc<VarRegistry>` field in
 //! release builds. The struct layout is `{ inner: Dual2<T>, seeded: Option<usize> }`
 //! plus, under `#[cfg(debug_assertions)]` only, a `gen_id: u64` stamped by the
 //! owning [`NamedForwardTape`] scope for the cross-registry debug guard.
@@ -37,7 +37,7 @@
 //! return the seeded values when the name matches and `T::zero()`
 //! otherwise. The `seeded: Option<usize>` field is NOT the registry — it
 //! is the positional index of the currently-seeded variable, a per-value
-//! attribute that survives Shape A.
+//! attribute that survives the minimal struct layout.
 //!
 //! Unlike `NamedDual` and `NamedFReal`, every binary op on
 //! `NamedDual2` must propagate the `seeded: Option<usize>` field through
@@ -787,8 +787,7 @@ pub(crate) fn merge_seeded(a: Option<usize>, b: Option<usize>) -> Option<usize> 
 }
 
 // ============================ Operator impls for NamedDual2 ============================
-// Shape A hand-written local macro (no shared stamping macro — the
-// LBLF-07 scaffold was deleted in Plan 02.2-02 Task 4) because of the
+// Hand-written local macro (no shared stamping macro) because of the
 // `seeded` field merge logic.
 // `Dual2<T>` is `Copy`, so inner-value ops are by-value throughout.
 // Each wrapper-vs-wrapper impl performs a debug-only `check_gen` between

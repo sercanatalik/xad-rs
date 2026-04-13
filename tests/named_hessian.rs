@@ -1,4 +1,4 @@
-//! Labeled-hessian integration cross-check suite (D2VH-01 primary proof).
+//! Labeled-hessian integration cross-check suite.
 //!
 //! Re-runs the 4 analytical expressions from `tests/dual2vec_analytical.rs`
 //! through `compute_full_hessian` and asserts the returned
@@ -10,12 +10,11 @@
 //!   `VarRegistry` insertion order is preserved end-to-end from the
 //!   `&[(String, f64)]` input slice through the output registry.
 //! - `lh.hessian == lh.hessian.t()` bit-exactly BEFORE any literal
-//!   check, matching the D2VS-06 symmetry-first assertion discipline
-//!   from Phase 3's analytical suite.
+//!   check (symmetry-first assertion discipline).
 //!
 //! Literals are NOT re-derived — they are copied from
 //! `tests/dual2vec_analytical.rs`, which has the full hand-derivation
-//! comments from Plan 03-04. The expression closures mirror the Phase 3
+//! comments. The expression closures mirror the `dual2vec_analytical`
 //! test expressions byte-for-byte, adjusted only for the
 //! `compute_full_hessian` closure argument type `&[Dual2Vec]`.
 //!
@@ -43,12 +42,12 @@ fn test_compute_full_hessian_x2y_plus_y3() {
         &(&(x * x) * y) + &(&(y * y) * y)
     });
 
-    // Registry insertion order (D2VH-02 end-to-end contract).
+    // Registry insertion order (end-to-end contract).
     assert_eq!(lh.vars.index_of("x"), Some(0));
     assert_eq!(lh.vars.index_of("y"), Some(1));
     assert_eq!(lh.vars.len(), 2);
 
-    // Shape + bit-exact symmetry BEFORE literal checks (D2VS-06).
+    // Shape + bit-exact symmetry BEFORE literal checks.
     assert_eq!(lh.hessian.dim(), (2, 2));
     assert_eq!(lh.hessian, lh.hessian.t());
     assert_eq!(lh.gradient.len(), 2);
@@ -70,7 +69,7 @@ fn test_compute_full_hessian_x2y_plus_y3() {
 fn test_compute_full_hessian_sin_xy() {
     let inputs = vec![("x".to_string(), 1.0), ("y".to_string(), PI / 2.0)];
     let lh = compute_full_hessian(&inputs, |v: &[Dual2Vec]| {
-        // Mirror the Phase 3 expression: (&x * &y).sin()
+        // (&x * &y).sin()
         // The unary .sin() consumes self, so produce an owned Dual2Vec
         // from the &·& product first.
         (&v[0] * &v[1]).sin()

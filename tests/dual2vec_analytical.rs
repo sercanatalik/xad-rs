@@ -1,32 +1,30 @@
-//! Analytical Hessian cross-check suite for `Dual2Vec` (D2VS-04).
+//! Analytical Hessian cross-check suite for `Dual2Vec`.
 //!
-//! Hand-derived literal Hessians at tolerance <= 1e-13. Per D2VS-03, no
-//! xad-rs code path computes the reference values — every expected entry
-//! is either a compile-time numeric literal or a `std::f64::consts`
-//! expression. Every test asserts `hess == hess.t()` bit-exactly as its
-//! first check per D2VS-06, and no test ever averages the two triangles
-//! before asserting (D2VS-02 — the Hessian is structurally symmetric
-//! straight out of the op pipeline).
+//! Hand-derived literal Hessians at tolerance <= 1e-13. No xad-rs code
+//! path computes the reference values — every expected entry is either a
+//! compile-time numeric literal or a `std::f64::consts` expression. Every
+//! test asserts `hess == hess.t()` bit-exactly as its first check, and no
+//! test ever averages the two triangles before asserting (the Hessian is
+//! structurally symmetric straight out of the op pipeline).
 //!
-//! The four expressions are dictated by D2VS-04:
+//! The four expressions:
 //!   1. `f(x, y) = x²·y + y³`            at `(1, 2)`
 //!   2. `f(x, y) = sin(x·y)`             at `(1, π/2)`
 //!   3. `f(x, y) = exp(x² + y²)`         at `(0.5, 0.5)`
-//!   4. `f(x, y) = (x - y)² · log(x + y)` at `(2, 1)` — hand-derived in
-//!      Plan 03-04 Task 1, derivation reproduced in the test comment.
+//!   4. `f(x, y) = (x - y)² · log(x + y)` at `(2, 1)`
 
 
 use approx::assert_abs_diff_eq;
 use std::f64::consts::PI;
 use xad_rs::Dual2Vec;
 
-/// Tolerance for every analytical cross-check in this suite. D2VS-04
-/// mandates `<= 1e-13`; do NOT loosen without a requirement change.
+/// Tolerance for every analytical cross-check in this suite (<= 1e-13).
+/// Do NOT loosen.
 const TOL: f64 = 1e-13;
 
 /// `f(x, y) = x²·y + y³` at `(x, y) = (1, 2)`.
 ///
-/// Hand derivation (from 03-CONTEXT.md specifics — literal):
+/// Hand derivation:
 /// - `f = 1·2 + 8 = 10`
 /// - `∂f/∂x = 2xy = 4`
 /// - `∂f/∂y = x² + 3y² = 13`
@@ -42,7 +40,7 @@ fn test_hessian_x2y_plus_y3() {
     // f = x²·y + y³ = (x * x) * y + (y * y) * y
     let f = &(&(&x * &x) * &y) + &(&(&y * &y) * &y);
 
-    // D2VS-06: bit-exact symmetry BEFORE any other assertion.
+    // Bit-exact symmetry BEFORE any other assertion.
     assert_eq!(f.hessian(), &f.hessian().t());
 
     assert_abs_diff_eq!(f.value(), 10.0, epsilon = TOL);
@@ -56,7 +54,7 @@ fn test_hessian_x2y_plus_y3() {
 
 /// `f(x, y) = sin(x·y)` at `(x, y) = (1, π/2)`.
 ///
-/// Hand derivation (from 03-CONTEXT.md specifics — literal):
+/// Hand derivation:
 /// - Let `u = xy`, `c = cos u`, `s = sin u`. At `u = π/2`: `c = 0`, `s = 1`.
 /// - `f = sin(π/2) = 1`
 /// - `∂f/∂x = y·c = (π/2)·0 = 0`
@@ -72,7 +70,7 @@ fn test_hessian_sin_xy() {
     let y = Dual2Vec::variable(PI / 2.0, 1, 2);
     let f = (&x * &y).sin();
 
-    // D2VS-06: bit-exact symmetry BEFORE any other assertion.
+    // Bit-exact symmetry BEFORE any other assertion.
     assert_eq!(f.hessian(), &f.hessian().t());
 
     // At u = π/2, sin u = 1 up to f64 precision of π/2 itself.
@@ -91,7 +89,7 @@ fn test_hessian_sin_xy() {
 
 /// `f(x, y) = exp(x² + y²)` at `(x, y) = (0.5, 0.5)`.
 ///
-/// Hand derivation (from 03-CONTEXT.md specifics — literal):
+/// Hand derivation:
 /// - `u = 0.25 + 0.25 = 0.5`
 /// - `e = exp(0.5) ≈ 1.6487212707001282`
 /// - `∂f/∂x = 2x·e = e`
@@ -107,7 +105,7 @@ fn test_hessian_exp_x2_plus_y2() {
     let y = Dual2Vec::variable(0.5, 1, 2);
     let f = (&(&x * &x) + &(&y * &y)).exp();
 
-    // D2VS-06: bit-exact symmetry BEFORE any other assertion.
+    // Bit-exact symmetry BEFORE any other assertion.
     assert_eq!(f.hessian(), &f.hessian().t());
 
     let e = 0.5_f64.exp();
@@ -122,8 +120,7 @@ fn test_hessian_exp_x2_plus_y2() {
 
 /// `f(x, y) = (x - y)² · log(x + y)` at `(x, y) = (2, 1)`.
 ///
-/// Hand derivation (performed in Plan 03-04 Task 1 — reproduced here in
-/// full so the test is self-contained without external references).
+/// Hand derivation (reproduced here in full so the test is self-contained).
 ///
 /// Let `d = x - y`, `s = x + y`, `ℓ = ln(s)`. At `(2, 1)`:
 /// `d = 1`, `s = 3`, `ℓ = ln 3 ≈ 1.0986122886681098`.
@@ -172,7 +169,7 @@ fn test_hessian_x_minus_y_squared_log_x_plus_y() {
     let sum = &x + &y;
     let f = &(&diff * &diff) * &sum.ln();
 
-    // D2VS-06: bit-exact symmetry BEFORE any other assertion.
+    // Bit-exact symmetry BEFORE any other assertion.
     assert_eq!(f.hessian(), &f.hessian().t());
 
     let ln3 = 3.0_f64.ln();

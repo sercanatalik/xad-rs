@@ -860,13 +860,12 @@ impl<T: TapeStorage> Default for AReal<T> {
 
 /// Labeled wrapper around a positional [`AReal<f64>`].
 ///
-/// **Shape A (minimal):** does NOT carry an `Arc<VarRegistry>` field. The
+/// Does NOT carry an `Arc<VarRegistry>` field. The
 /// only way to construct a `NamedAReal` is via [`NamedTape::input`], so
 /// every `NamedAReal` is structurally tied to exactly one tape via the
 /// thread-local active pointer; cross-tape mixing is structurally
 /// impossible (the second `NamedTape::freeze()` on one thread panics).
-/// Skipping the `Arc` field saves one atomic increment per operator and is
-/// the gate-binding choice for the named reverse-mode bench in Phase 2.
+/// Skipping the `Arc` field saves one atomic increment per operator.
 #[derive(Clone)]
 pub struct NamedAReal {
     inner: AReal<f64>,
@@ -892,7 +891,7 @@ impl NamedAReal {
         &self.inner
     }
 
-    // ============ Elementary math delegations (mirrors Phase 1 NamedFReal) ============
+    // ============ Elementary math delegations (mirrors NamedFReal) ============
     #[inline]
     pub fn sin(&self) -> Self {
         Self {
@@ -958,11 +957,9 @@ impl fmt::Debug for NamedAReal {
     }
 }
 
-// ============ Operator overloads — hand-written, Shape A ============
-// No shared op-stamping macro is used: Shape A does not carry a
-// `registry: Arc<VarRegistry>` field, and the historical LBLF-07
-// stamping scaffold has been deleted in Plan 02.2-02. The four
-// reference variants
+// ============ Operator overloads — hand-written ============
+// No shared op-stamping macro is used: the struct does not carry a
+// `registry: Arc<VarRegistry>` field. The four reference variants
 // (owned/owned, ref/ref, owned/ref, ref/owned) plus scalar variants are
 // stamped explicitly below. The inner `AReal` operators read TLS via
 // `record_binary` / `record_unary`, so the named wrapper is a pure

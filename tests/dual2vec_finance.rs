@@ -1,46 +1,40 @@
-//! Garman-Kohlhagen FX option 6×6 Hessian cross-check for `Dual2Vec` (D2VS-07
-//! primary analytical + D2VS-05 amended FD smoke per CONTEXT.md D-01).
+//! Garman-Kohlhagen FX option 6×6 Hessian cross-check for `Dual2Vec`.
 //!
 //! Two assertions run on the **same** 6×6 Hessian at the **same** test point:
 //!
-//! 1. **Primary (D2VS-07)** — analytical closed-form second-order Greeks at
-//!    tolerance `1e-11`. The gamma closed form `∂²C/∂S² = exp(-rf·T)·φ(d1) /
+//! 1. **Primary** — analytical closed-form second-order Greeks at tolerance
+//!    `1e-11`. The gamma closed form `∂²C/∂S² = exp(-rf·T)·φ(d1) /
 //!    (S·σ·√T)` is computed in pure f64 (only `ln`, `exp`, `sqrt`, arithmetic
 //!    — NO erf), so there is no Abramowitz-Stegun approximation floor to
 //!    fight. Volga and vanna add two more bit-exact cells.
 //!
-//! 2. **Secondary (D2VS-05 amended)** — `xad_rs::compute_hessian`
-//!    (reverse-mode + forward-difference, eps = 1e-7) at tolerance `5e-5`.
-//!    This is an independent sanity smoke check; the FD Hessian error is
-//!    dominated by `O(eps·|∂³f|) + O(roundoff/eps)` — for Garman-Kohlhagen
-//!    at our test point, gamma is ~3.46 and the third derivative `∂³C/∂S³`
-//!    is O(100), giving an honest FD bound of `~1.5e-5` on `H[0, 0]`. The
-//!    tolerance is set to `5e-5` for a safety margin above the measured
-//!    per-element max-delta, keeping the smoke check meaningful while not
-//!    fighting floating-point reality. Per CONTEXT.md D-01, the original
-//!    D2VS-05 wording ("seeded compute_hessian at 1e-12") described a
-//!    function that does not exist in `src/hessian.rs` — the actual
-//!    implementation is FD-based and cannot deliver more than ~1e-5
-//!    accuracy without a finer `eps` (which would then lose to roundoff).
+//! 2. **Secondary** — `xad_rs::compute_hessian` (reverse-mode +
+//!    forward-difference, eps = 1e-7) at tolerance `5e-5`. This is an
+//!    independent sanity smoke check; the FD Hessian error is dominated by
+//!    `O(eps·|∂³f|) + O(roundoff/eps)` — for Garman-Kohlhagen at our test
+//!    point, gamma is ~3.46 and the third derivative `∂³C/∂S³` is O(100),
+//!    giving an honest FD bound of `~1.5e-5` on `H[0, 0]`. The tolerance is
+//!    set to `5e-5` for a safety margin above the measured per-element
+//!    max-delta, keeping the smoke check meaningful while not fighting
+//!    floating-point reality. The actual `compute_hessian` implementation is
+//!    FD-based and cannot deliver more than ~1e-5 accuracy without a finer
+//!    `eps` (which would then lose to roundoff).
 //!
 //! Neither assertion post-processes the Hessian via any averaging helper —
-//! structural symmetry is asserted bit-exactly BEFORE any comparison
-//! (D2VS-06). Neither `src/hessian.rs` nor the FX-option example file is
-//! edited (purely-additive rule); the Garman-Kohlhagen formula is duplicated
-//! in this test file with a derivation comment so the test is
-//! self-contained.
+//! structural symmetry is asserted bit-exactly BEFORE any comparison.
+//! The Garman-Kohlhagen formula is duplicated in this test file with a
+//! derivation comment so the test is self-contained.
 //!
 //! ## Why `erf` value precision doesn't matter for the 1e-11 check
 //!
-//! The `Dual2Vec::erf` elementary added in Plan 03-05 Task 1 uses
-//! `crate::math::erf` (Abramowitz & Stegun 7.1.26, ~1.5e-7 absolute value
-//! error) for the function value, but its chain-rule derivatives
-//! `g'(u) = (2/√π)·exp(-u²)` and `g''(u) = -2u·g'(u)` use only `f64::exp`
-//! plus exact arithmetic. The closed-form gamma formula
-//! `∂²C/∂S² = exp(-rf·T)·φ(d1)/(S·σ·√T)` depends algebraically on
-//! `φ(d1) = N'(d1)` — i.e. the *derivative* of the normal CDF, not its
-//! value — so the A&S value floor cancels out of H[0, 0] / H[4, 4] /
-//! H[0, 4]. Empirically these three cells match the closed form at
+//! The `Dual2Vec::erf` elementary uses `crate::math::erf` (Abramowitz &
+//! Stegun 7.1.26, ~1.5e-7 absolute value error) for the function value, but
+//! its chain-rule derivatives `g'(u) = (2/√π)·exp(-u²)` and
+//! `g''(u) = -2u·g'(u)` use only `f64::exp` plus exact arithmetic. The
+//! closed-form gamma formula `∂²C/∂S² = exp(-rf·T)·φ(d1)/(S·σ·√T)` depends
+//! algebraically on `φ(d1) = N'(d1)` — i.e. the *derivative* of the normal
+//! CDF, not its value — so the A&S value floor cancels out of H[0, 0] /
+//! H[4, 4] / H[0, 4]. Empirically these three cells match the closed form at
 //! ~1e-13 in both debug and release; 1e-11 is the chosen safety margin.
 
 
@@ -49,7 +43,7 @@ use xad_rs::AReal;
 use xad_rs::Dual2Vec;
 
 // ============================================================================
-// Test inputs — D2VS-07 locked values per CONTEXT.md Garman-Kohlhagen block
+// Test inputs — Garman-Kohlhagen locked values
 // ============================================================================
 const SPOT: f64 = 1.3500;
 const STRIKE: f64 = 1.3600;
@@ -173,9 +167,8 @@ fn gk_call_areal(inputs: &[AReal<f64>]) -> AReal<f64> {
     spot * &disc_f * n_d1 - strike * &disc_d * n_d2
 }
 
-/// D2VS-07 primary analytical check + D2VS-05 amended FD smoke check,
-/// both running against the **same** 6×6 Dual2Vec Hessian at the same
-/// locked test point from CONTEXT.md.
+/// Primary analytical check + FD smoke check, both running against the
+/// **same** 6×6 Dual2Vec Hessian at the same locked test point.
 #[test]
 fn test_garman_kohlhagen_hessian_two_tier() {
     // ---------------------------------------------------------------
@@ -194,11 +187,11 @@ fn test_garman_kohlhagen_hessian_two_tier() {
     let f_d2v = gk_call_dual2vec(&inputs_d2v);
     let h_d2v = f_d2v.hessian().clone();
 
-    // D2VS-06: bit-exact structural symmetry BEFORE any comparison
+    // Bit-exact structural symmetry BEFORE any comparison
     assert_eq!(&h_d2v, &h_d2v.t());
 
     // ---------------------------------------------------------------
-    // D2VS-07 primary check — closed-form analytical Greeks
+    // Primary check — closed-form analytical Greeks
     // ---------------------------------------------------------------
     //
     // Recompute d1, d2, φ(d1), vega in pure f64 at the test point. These
@@ -243,7 +236,7 @@ fn test_garman_kohlhagen_hessian_two_tier() {
     // so asserting it separately is redundant — we already know it.
 
     // ---------------------------------------------------------------
-    // D2VS-05 amended secondary FD smoke check — tolerance 5e-5
+    // Secondary FD smoke check — tolerance 5e-5
     // ---------------------------------------------------------------
     //
     // `xad_rs::compute_hessian` is reverse-mode gradient + forward-
@@ -253,27 +246,24 @@ fn test_garman_kohlhagen_hessian_two_tier() {
     // FD bound is ~1.5e-5 on H[0, 0]. Tolerance `5e-5` gives a small safety
     // margin above the measured per-element max-delta.
     //
-    // Note: grep for "1e-5" in this file — the string `1e-5` appears in the
-    // module docs block above for D-01 discussion; the actual assertion uses
-    // `5e-5` to accommodate the measured FD error. The plan's D2VS-05
-    // criterion "tolerance 1e-5" was a planner estimate of FD accuracy; the
-    // measured reality is 1.5e-5 on H[0, 0], so the tolerance is amended at
-    // execution time (Rule 1 auto-fix) to the honest bound + margin.
+    // The actual assertion uses `5e-5` to accommodate the measured FD error.
+    // The measured reality is ~1.5e-5 on H[0, 0], so `5e-5` provides a
+    // safety margin above the honest FD truncation bound.
     let fd_inputs = [SPOT, STRIKE, RD, RF, VOL, T_YRS];
     let h_fd: Vec<Vec<f64>> = xad_rs::compute_hessian(&fd_inputs, gk_call_areal);
     assert_eq!(h_fd.len(), 6);
     assert_eq!(h_fd[0].len(), 6);
 
-    // Every element of the 6×6 must agree at tolerance 5e-5. The original
-    // planner estimate was 1e-5; measured max-delta at H[0, 0] is ~1.5e-5
-    // (gamma cell), dominated by the O(eps·|∂³C/∂S³|) FD truncation error.
+    // Every element of the 6×6 must agree at tolerance 5e-5. Measured
+    // max-delta at H[0, 0] is ~1.5e-5 (gamma cell), dominated by the
+    // O(eps·|∂³C/∂S³|) FD truncation error.
     const FD_TOL: f64 = 5e-5;
     for i in 0..6 {
         for j in 0..6 {
             let diff = (h_d2v[[i, j]] - h_fd[i][j]).abs();
             assert!(
                 diff < FD_TOL,
-                "D2VS-05 FD smoke check failed at [{i},{j}]: d2v={} fd={} diff={} tol={}",
+                "FD smoke check failed at [{i},{j}]: d2v={} fd={} diff={} tol={}",
                 h_d2v[[i, j]],
                 h_fd[i][j],
                 diff,

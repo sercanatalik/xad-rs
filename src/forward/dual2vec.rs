@@ -79,7 +79,7 @@
 //! bit-exactly BEFORE ever calling [`Dual2Vec::symmetrize`]. The
 //! `symmetrize` helper exists only as a user-facing safety valve for
 //! downstream code that accumulates cross-module Hessians outside the
-//! `Dual2Vec` hot path — Phase 3 internal code never needs it.
+//! `Dual2Vec` hot path — internal code never needs it.
 //!
 //! ## `Div` is a direct closed form — NOT `Mul ∘ Recip`
 //!
@@ -111,11 +111,6 @@
 //!
 //! `sin`, `cos`, `tan`, `exp`, `ln`, `sqrt`, `tanh`, `atan`, `asinh`, `erf`
 //!
-//! The first nine are the original `D2VA-04` set landed in Plan 03-03.
-//! `erf` was added in Plan 03-05 as a **narrow D2VA-04 extension** to
-//! support the `D2VS-07` Garman–Kohlhagen closed-form cross-check (the
-//! standard-normal CDF `N(x) = 0.5·(1 + erf(x/√2))` needs `erf` as a
-//! Dual2Vec elementary so the chain rule flows through the Hessian).
 //! The `erf` *value* goes through the Abramowitz-Stegun 7.1.26 polynomial
 //! approximation (~1.5e-7 absolute error, same as `crate::math::erf`),
 //! but its analytical derivatives `(2/√π)·exp(-u²)` and `-2u·g'(u)` use
@@ -124,16 +119,16 @@
 //!
 //! ## Correctness proof
 //!
-//! Phase 3's correctness evidence is two-tiered:
+//! Correctness evidence is two-tiered:
 //!
 //! - **Analytical cross-check suite** at tolerance `1e-13`
-//!   (`tests/dual2vec_analytical.rs`, Plan 03-04): four hand-derived
+//!   (`tests/dual2vec_analytical.rs`): four hand-derived
 //!   literal Hessians on `x²y + y³`, `sin(xy)`, `exp(x² + y²)`, and
 //!   `(x - y)²·log(x + y)`. Every test asserts `hess == hess.t()`
-//!   bit-exactly BEFORE any element comparison (D2VS-06).
+//!   bit-exactly BEFORE any element comparison.
 //! - **Deployment-scale Garman–Kohlhagen 6×6 Hessian two-tier check**
 //!   at tolerance `1e-11` primary / `5e-5` secondary
-//!   (`tests/dual2vec_finance.rs`, Plan 03-05): primary asserts three
+//!   (`tests/dual2vec_finance.rs`): primary asserts three
 //!   closed-form analytical Greeks (gamma = `H[0,0]`, volga = `H[4,4]`,
 //!   vanna = `H[0,4]`) at 1e-11 against `exp(-rf·T)·φ(d1)/(S·σ·√T)` and
 //!   friends; secondary asserts all 36 entries at 5e-5 against
@@ -142,12 +137,11 @@
 //!   FD truncation budget at the GK test point — see the
 //!   `tests/dual2vec_finance.rs` module docs for the full derivation.
 //!
-//! ## No lifetime parameters (PyO3-future)
+//! ## No lifetime parameters
 //!
-//! `Dual2Vec` deliberately carries **zero lifetime parameters** — all
-//! fields are owned. This preserves future PyO3 binding compatibility
-//! per `PROJECT.md` line 107 (PyO3 cannot express Rust lifetimes across
-//! the FFI boundary cleanly).
+//! `Dual2Vec` carries **zero lifetime parameters** — all fields are owned.
+//! This preserves PyO3 binding compatibility (PyO3 cannot express Rust
+//! lifetimes across the FFI boundary cleanly).
 
 use ndarray::{Array1, Array2};
 use std::ops::{Add, Div, Mul, Sub};
@@ -221,13 +215,13 @@ impl Dual2Vec {
 
     /// User-facing Hessian symmetrization helper — enforces `H ← 0.5·(H + Hᵀ)`.
     ///
-    /// **Internal invariant:** Phase 3's `Dual2Vec` ops never produce
-    /// asymmetric Hessians — every binary op computes the upper triangle
-    /// and mirrors it via [`mirror_upper_triangle`], and every test
-    /// asserts `hess == hess.t()` bit-exactly BEFORE calling this helper.
-    /// The helper exists only as a user-facing safety valve for downstream
+    /// **Internal invariant:** `Dual2Vec` ops never produce asymmetric
+    /// Hessians — every binary op computes the upper triangle and mirrors
+    /// it via [`mirror_upper_triangle`], and every test asserts
+    /// `hess == hess.t()` bit-exactly BEFORE calling this helper. The
+    /// helper exists only as a user-facing safety valve for downstream
     /// code that accumulates cross-module Hessians outside the `Dual2Vec`
-    /// hot path. See D2VS-02.
+    /// hot path.
     pub fn symmetrize(&mut self) {
         let n = self.hess.nrows();
         debug_assert_eq!(
@@ -252,11 +246,9 @@ impl Dual2Vec {
 /// entries `H[j, i]` for `i < j` are overwritten with `H[i, j]`; the
 /// diagonal is untouched.
 ///
-/// `#[allow(dead_code)]`: Plan 03-01's Add/Sub produce structurally symmetric
-/// Hessians by linearity alone (no mirror needed). Plan 03-02 will call this
-/// from `Mul`/`Div` where the upper-triangle computation is non-trivial. The
-/// helper is landed now so the architecture is in place before the TDD-first
-/// Mul cross-term test in 03-02.
+/// `#[allow(dead_code)]`: Add/Sub produce structurally symmetric Hessians by
+/// linearity alone (no mirror needed). Used by `Mul`/`Div` where the
+/// upper-triangle computation is non-trivial.
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn mirror_upper_triangle(h: &mut Array2<f64>) {
@@ -270,15 +262,14 @@ pub(crate) fn mirror_upper_triangle(h: &mut Array2<f64>) {
 }
 
 // ============================================================================
-// Add / Sub — linear propagation of value, grad, and hess (D2VA-01)
+// Add / Sub — linear propagation of value, grad, and hess
 // ============================================================================
 //
 // Add/Sub do not produce any cross-term contribution — they are linear in all
 // three components. Structural symmetry still holds trivially because
 // `hess_a + hess_b` is symmetric whenever both inputs are. No call to
 // `mirror_upper_triangle` is needed, but binary-op tests still assert
-// `hess == hess.t()` bit-exactly to exercise the symmetry machinery before
-// Mul/Div land (D2VS-06).
+// `hess == hess.t()` bit-exactly to exercise the symmetry machinery.
 
 #[inline]
 fn shape_check(a: &Dual2Vec, b: &Dual2Vec) {
@@ -349,14 +340,14 @@ impl Sub for Dual2Vec {
 //           + (a.grad ⊗ b.grad + b.grad ⊗ a.grad)   ← symmetric cross term
 //
 // The cross term `a.grad ⊗ b.grad + b.grad ⊗ a.grad` is the only part
-// that isn't purely linear in the inputs — this is the D2VA-02 TDD-first
-// check: on f = x·y with `x = variable(_, 0, 2)` and `y = variable(_, 1, 2)`
+// that isn't purely linear in the inputs — on f = x·y with
+// `x = variable(_, 0, 2)` and `y = variable(_, 1, 2)`
 // the outer products evaluate to
 //   [[0, 1], [0, 0]] + [[0, 0], [1, 0]] = [[0, 1], [1, 0]]
 // which gives the expected `H[0, 1] = H[1, 0] = 1`.
 //
 // Structural symmetry is preserved by computing the upper triangle only
-// (i ≤ j) and mirroring via `mirror_upper_triangle`. See D2VS-01.
+// (i ≤ j) and mirroring via `mirror_upper_triangle`.
 
 impl Mul<&Dual2Vec> for &Dual2Vec {
     type Output = Dual2Vec;
@@ -421,7 +412,7 @@ impl Mul for Dual2Vec {
 // the already-computed gradient of the quotient and b's gradient. It
 // plays the same structural role as Mul's `(a.grad ⊗ b.grad + …)` term
 // and is mirrored from the upper triangle via `mirror_upper_triangle`
-// for structural symmetry (D2VS-01).
+// for structural symmetry.
 
 impl Div<&Dual2Vec> for &Dual2Vec {
     type Output = Dual2Vec;
@@ -465,7 +456,7 @@ impl Div for Dual2Vec {
 
 // ============================================================================
 // Unary elementaries — stamped via `impl_unary_dual2vec!` macro from
-// `(f, f', f'')` triples per D2VA-04 / D2VA-07.
+// `(f, f', f'')` triples.
 // ============================================================================
 //
 // Multi-variable chain rule for a unary function `g(u)` applied to
@@ -481,7 +472,7 @@ impl Div for Dual2Vec {
 // invariant. So the resulting Hessian is structurally symmetric with no
 // explicit mirror needed — but we still call `mirror_upper_triangle` at the
 // end for consistency with the Mul/Div pattern and to keep the structural-
-// symmetry guarantee local to every op (D2VS-01).
+// symmetry guarantee local to every op.
 
 /// Stamp a unary elementary from an `(f, f', f'')` triple.
 ///
@@ -490,7 +481,7 @@ impl Div for Dual2Vec {
 /// - `$fp`:  `|u: f64| -> f64` computing `f'(u)`.
 /// - `$fpp`: `|u: f64| -> f64` computing `f''(u)`.
 ///
-/// The macro is `pub(crate)` and NOT exported — see D2VA-07.
+/// The macro is `pub(crate)` and NOT exported.
 macro_rules! impl_unary_dual2vec {
     ($name:ident, $f:expr, $fp:expr, $fpp:expr) => {
         impl Dual2Vec {
@@ -606,10 +597,8 @@ impl_unary_dual2vec!(
 
 // --- erf: g(u) = erf u, g'(u) = (2/√π)·exp(-u²), g''(u) = -2u·g'(u) ---
 //
-// NOT in the original D2VA-04 list of 9 elementaries — added in Plan 03-05
-// as a narrow extension to support the D2VS-07 Garman-Kohlhagen 6×6 Hessian
-// cross-check. The closed-form reference `N(x) = 0.5·(1 + erf(x/√2))` for the
-// standard normal CDF needs `erf` as a Dual2Vec elementary so the chain-rule
+// The closed-form reference `N(x) = 0.5·(1 + erf(x/√2))` for the standard
+// normal CDF needs `erf` as a Dual2Vec elementary so the chain-rule
 // derivatives are exact rather than fighting an Abramowitz-Stegun rational-
 // approximation error floor at 1e-11 tolerance.
 //
@@ -662,10 +651,10 @@ impl_unary_dual2vec!(
 // `powf(k)` uses the direct chain-rule closed form `g(u) = u^k` with
 // `g'(u) = k·u^{k-1}`, `g''(u) = k·(k-1)·u^{k-2}`. It is NOT
 // `exp(k·ln(u))` — the exp·ln form loses precision as `u → 0` where
-// `ln(u) → -∞` (D2VA-05).
+// `ln(u) → -∞`.
 //
 // `powd(y)` (both base and exponent are active) routes through
-// `exp(y · ln(self))` per D2VA-06 — this is the correct formulation when
+// `exp(y · ln(self))` — this is the correct formulation when
 // the exponent itself depends on active inputs, and it composes the
 // already-implemented ln / Mul / exp ops.
 
@@ -674,7 +663,7 @@ impl Dual2Vec {
     /// chain-rule closed form.
     ///
     /// The direct form avoids the precision loss of `exp(k·ln(u))` as
-    /// `u → 0` (where `ln(u) → -∞`). See D2VA-05.
+    /// `u → 0` (where `ln(u) → -∞`).
     ///
     /// Formula (single-variable chain rule `g(u) = u^k` lifted to multi-
     /// variable):
@@ -713,7 +702,7 @@ impl Dual2Vec {
     }
 
     /// Raise `self` to a `Dual2Vec` power — both base and exponent are
-    /// active. Routes through `exp(y · ln(self))` per D2VA-06.
+    /// active. Routes through `exp(y · ln(self))`.
     ///
     /// Slower than [`Dual2Vec::powf`] because it chains three nonlinear
     /// ops (`ln`, `*`, `exp`), but this is the correct formulation when
@@ -800,7 +789,7 @@ mod tests {
         assert_eq!(s.value(), 7.0);
         assert_eq!(s.gradient(), &array![1.0, 1.0]);
         assert_eq!(s.hessian(), &Array2::<f64>::zeros((2, 2)));
-        assert_eq!(s.hess, s.hess.t()); // bit-exact symmetry per D2VS-06
+        assert_eq!(s.hess, s.hess.t()); // bit-exact symmetry
     }
 
     #[test]
@@ -835,8 +824,7 @@ mod tests {
     // Debug-only test: `shape_check` uses `debug_assert_eq!` which is compiled
     // out in release mode, so ndarray's internal incompatible-shape panic fires
     // with a different (ndarray-owned) message. The test is gated to debug
-    // builds so release-mode `cargo test --release` stays green. Plan 03-01's
-    // phase-wide verification runs both debug and release; both must be clean.
+    // builds so release-mode `cargo test --release` stays green.
     #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "gradient length mismatch")]
@@ -867,7 +855,7 @@ mod tests {
         let f = &x * &x;
         assert_eq!(f.value(), 25.0);
         assert_eq!(f.gradient(), &array![10.0, 0.0]);
-        // Bit-exact structural symmetry BEFORE any Hessian element assertion (D2VS-06)
+        // Bit-exact structural symmetry BEFORE any Hessian element assertion
         assert_eq!(f.hess, f.hess.t());
         assert_eq!(f.hessian()[[0, 0]], 2.0);
         assert_eq!(f.hessian()[[1, 1]], 0.0);
@@ -887,7 +875,7 @@ mod tests {
         assert_eq!(f.value(), 15.0);
         // ∂f/∂x = b = 5; ∂f/∂y = a+b = 8; ∂f/∂z = a = 3
         assert_eq!(f.gradient(), &array![5.0, 8.0, 3.0]);
-        // Bit-exact symmetry before ANY symmetrize call (D2VS-06)
+        // Bit-exact symmetry before ANY symmetrize call
         assert_eq!(f.hess, f.hess.t());
     }
 
@@ -907,7 +895,7 @@ mod tests {
         assert_eq!(f.value(), 7.5);
         assert_eq!(f.gradient()[0], 1.0);
         assert_eq!(f.gradient()[1], -7.5);
-        // Bit-exact structural symmetry BEFORE any element assertion (D2VS-06)
+        // Bit-exact structural symmetry BEFORE any element assertion
         assert_eq!(f.hess, f.hess.t());
         assert_eq!(f.hessian()[[0, 0]], 0.0);
         assert_eq!(f.hessian()[[1, 1]], 15.0);
@@ -928,13 +916,12 @@ mod tests {
     }
 
     // ========================================================================
-    // Unary elementary + pow unit tests (Plan 03-03, Task 3)
+    // Unary elementary + pow unit tests
     //
     // Per-elementary smoke tests — the BULK analytical cross-check suite
-    // lives in `tests/dual2vec_analytical.rs` (Plan 03-04). Each test here
-    // asserts value / gradient / Hessian on a simple 2-variable point and
-    // checks `hess == hess.t()` bit-exactly before any symmetrize call
-    // (D2VS-06).
+    // lives in `tests/dual2vec_analytical.rs`. Each test here asserts
+    // value / gradient / Hessian on a simple 2-variable point and checks
+    // `hess == hess.t()` bit-exactly before any symmetrize call.
     // ========================================================================
 
     use approx::assert_abs_diff_eq;
