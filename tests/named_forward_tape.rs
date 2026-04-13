@@ -1,12 +1,3 @@
-//! Tests for `NamedForwardTape` — the Shape A forward-mode scope.
-//!
-//! Phase 02.2 Plan 02.2-01. Covers:
-//!
-//! - Basic input / freeze / compute / read-back smoke cycle.
-//! - TLS save-restore discipline: a nested `NamedForwardTape` must not
-//!   corrupt the outer tape's generation when it drops.
-//! - Cross-generation debug guard: values from two live tapes panic when
-//!   mixed in a binary op in debug builds.
 
 
 use xad_rs::{NamedFReal, NamedForwardTape};

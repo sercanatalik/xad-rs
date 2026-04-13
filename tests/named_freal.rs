@@ -1,13 +1,3 @@
-//! LBLF-06 cross-check tests for `NamedFReal<f64>`.
-//!
-//! Each test asserts bit-exact (`assert_eq!`) equality between the named
-//! wrapper and a positional `FReal<f64>` running the same expression.
-//!
-//! Phase 02.2 Plan 02.2-01: rewritten to the `NamedForwardTape` API.
-//! The wrapper no longer carries an `Arc<VarRegistry>` field; values are
-//! obtained exclusively via `ft.input_freal` / `ft.constant_freal`. The
-//! LBLF-06 bit-exactness guarantee holds byte-identically after the
-//! rewrite — that is the whole point of this file.
 
 
 use xad_rs::FReal;
