@@ -24,9 +24,6 @@ readback.
 | `AReal<T>` + `Tape` | Reverse (adjoint) | 1st | many inputs, scalar output |
 | `Dual2Vec` | Forward, dense 2nd | 1st + 2nd (full) | full n x n Hessian, n < ~50 |
 
-Reverse mode breaks even with forward around n ~ 4 inputs. For n >> 4
-(e.g. 30-input swap pricer), reverse is dramatically faster.
-
 Every mode also has a **named** variant (`NamedDual`, `NamedTape`, etc.)
 that lets you read gradients by variable name instead of positional index.
 
