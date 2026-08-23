@@ -1,0 +1,70 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      # Everything below the checkout runs before `cargo publish`, because a
+      # published version is permanent: it can be yanked, but never replaced
+      # and never withdrawn. Each step is a precondition, not a nicety.
+
+      - name: Tag matches the manifest version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          echo "tag=${tag}  manifest=${manifest}"
+          if [ "${tag}" != "${manifest}" ]; then
+            echo "::error::tag v${tag} does not match Cargo.toml version ${manifest}"
+            exit 1
+          fi
+
+      - name: CHANGELOG documents this version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          if ! grep -qE "^## \[${tag}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${tag}]' section"
+            exit 1
+          fi
+
+      - name: Package contains only the crate
+        run: |
+          set -euo pipefail
+          # Local planning notes are gitignored, which keeps them out of the
+          # package only for as long as it is built from a git checkout. This
+          # asserts the outcome directly, against the file list that would
+          # actually be uploaded.
+          if cargo package --list | grep -E '^openspec/'; then
+            echo "::error::openspec/ would be published; add /openspec/ to the exclude list in Cargo.toml"
+            exit 1
+          fi
+
+      - name: Build and test
+        run: |
+          cargo build --all-targets
+          cargo test --all-targets
+          cargo test --doc
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish

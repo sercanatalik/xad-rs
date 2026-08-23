@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: build & test (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - run: cargo build --all-targets --verbose
+
+      - run: cargo test --all-targets --verbose
+
+      # `--all-targets` silently skips doctests. The rustdoc examples are part
+      # of the documented surface and assert real numeric results, so they are
+      # run explicitly rather than left ungated.
+      - run: cargo test --doc --verbose
+
+  msrv:
+    name: build (MSRV 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `rust-version` in Cargo.toml and the README badge both promise 1.85.
+      # Nothing else verifies that promise; a stable-only job would not notice
+      # a newer feature creeping into the source.
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.85 --profile minimal --no-self-update
+
+      - run: cargo +1.85 build --verbose

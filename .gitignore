@@ -1,0 +1,18 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local planning artifacts. These are working notes, not part of the crate:
+# they record rationale that is only meaningful alongside the tree they were
+# written in, and nothing in the published crate should depend on them. The
+# CHANGELOG and docs/ carry whatever of that reasoning belongs in public.
+/openspec/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
