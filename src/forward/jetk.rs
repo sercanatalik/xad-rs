@@ -142,9 +142,19 @@ impl<T: Passive, const K: usize> Div for JetK<T, K> {
     type Output = Self;
     #[inline]
     fn div(self, rhs: Self) -> Self {
+        // The value is the correctly rounded quotient, not `self.value * inv`:
+        // that spelling rounds twice and would make the number this mode
+        // returns differ from the passive scalar's for the same operands. See
+        // the passive-reference rule in `crate::real`.
+        //
+        // `q_recip` is deliberately NOT the corrected quotient. The `-a/b²`
+        // partial is a derivative, and this correction moves values only —
+        // reusing the corrected quotient here would shift `JetK`'s b-partial
+        // by up to 1 ulp on roughly a quarter of inputs, which is a separate
+        // change with its own justification to make.
         let inv = T::one() / rhs.value;
-        let r = self.value * inv;
-        self.chain2(rhs, r, inv, -r * inv)
+        let q_recip = self.value * inv;
+        self.chain2(rhs, self.value / rhs.value, inv, -q_recip * inv)
     }
 }
 

@@ -226,9 +226,14 @@ impl_jet1_binop!(Mul, mul, (a, b) => Jet1 {
 });
 impl_jet1_binop!(Div, div, (a, b) => {
     // d(a/b) = (a'·b - a·b') / b²
+    //
+    // The value is the correctly rounded quotient, NOT `a.value * inv_b`:
+    // that spelling rounds twice and lands up to 1 ulp away from `a / b`,
+    // which would make the number depend on the mode. `inv_b` is kept, but
+    // only for the tangent. See the passive-reference rule in `crate::real`.
     let inv_b = T::one() / b.value;
     Jet1 {
-        value: a.value * inv_b,
+        value: a.value / b.value,
         derivative: (a.derivative * b.value - a.value * b.derivative) * inv_b * inv_b,
     }
 });
@@ -246,9 +251,10 @@ impl_jet1_binop_scalar_rhs!(Mul, mul, (a, r) => Jet1 {
     derivative: a.derivative * r,
 });
 impl_jet1_binop_scalar_rhs!(Div, div, (a, r) => {
+    // Quotient for the value, reciprocal for the tangent — see above.
     let inv = T::one() / r;
     Jet1 {
-        value: a.value * inv,
+        value: a.value / r,
         derivative: a.derivative * inv,
     }
 });
@@ -267,9 +273,10 @@ impl_scalar_lhs_jet1_binop!(Mul, mul, (l, r) => Jet1 {
 });
 impl_scalar_lhs_jet1_binop!(Div, div, (l, r) => {
     // d(c/x) = -c·x' / x²
+    // Quotient for the value, reciprocal for the tangent — see above.
     let inv = 1.0 / r.value;
     Jet1 {
-        value: l * inv,
+        value: l / r.value,
         derivative: -l * r.derivative * inv * inv,
     }
 });

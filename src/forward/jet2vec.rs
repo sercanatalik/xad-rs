@@ -460,14 +460,24 @@ impl<T: Passive> Div<&Jet2Vec<T>> for &Jet2Vec<T> {
         let inv_b = T::one() / b_val;
         let n = self.grad.len();
 
-        let value = self.value * inv_b;
+        // The correctly rounded quotient, not `self.value * inv_b`: the two
+        // spellings differ by up to 1 ulp, and the value this mode returns
+        // must be the one the passive scalar returns for the same operands.
+        let value = self.value / b_val;
 
-        // grad: (a.grad - value · b.grad) / b.value, elementwise.
+        // `v` is the quotient as it appears in the closed form below, and it
+        // keeps the reciprocal spelling on purpose: this correction moves
+        // values only. Substituting `value` here would shift the gradient and
+        // Hessian by up to 1 ulp on roughly a quarter of inputs — a strictly
+        // more accurate result, but a derivative change, which this is not.
+        let v = self.value * inv_b;
+
+        // grad: (a.grad - v · b.grad) / b.value, elementwise.
         let grad: Array1<T> = self
             .grad
             .iter()
             .zip(rhs.grad.iter())
-            .map(|(&ga, &gb)| (ga - value * gb) * inv_b)
+            .map(|(&ga, &gb)| (ga - v * gb) * inv_b)
             .collect();
 
         // hess: cross term uses the NEW gradient (`grad` above), per the
@@ -481,7 +491,7 @@ impl<T: Passive> Div<&Jet2Vec<T>> for &Jet2Vec<T> {
             let gb_i = gb[i];
             for j in i..n {
                 let cross = gq_i * gb[j] + gb_i * gq[j];
-                hess.push((self.hess[k] - value * rhs.hess[k] - cross) * inv_b);
+                hess.push((self.hess[k] - v * rhs.hess[k] - cross) * inv_b);
                 k += 1;
             }
         }
@@ -499,13 +509,15 @@ impl<T: Passive> Div for Jet2Vec<T> {
         debug_assert!(b_val != T::zero(), "Jet2Vec::div by zero value");
         let inv_b = T::one() / b_val;
         let n = self.grad.len();
-        let value = self.value * inv_b;
-        self.value = value;
+        // Correctly rounded quotient for the value, reciprocal spelling for
+        // the closed form — see the by-reference impl above.
+        let v = self.value * inv_b;
+        self.value = self.value / b_val;
 
         // grad in place FIRST: the hess loop below needs the NEW gradient
         // (closed form) plus the original self.hess — untouched until then.
         for (sg, &rg) in self.grad.iter_mut().zip(rhs.grad.iter()) {
-            *sg = (*sg - value * rg) * inv_b;
+            *sg = (*sg - v * rg) * inv_b;
         }
 
         // hess in place using the just-updated self.grad.
@@ -518,7 +530,7 @@ impl<T: Passive> Div for Jet2Vec<T> {
                 let gb_i = gb[i];
                 for j in i..n {
                     let cross = gq_i * gb[j] + gb_i * gq[j];
-                    self.hess[k] = (self.hess[k] - value * rhs.hess[k] - cross) * inv_b;
+                    self.hess[k] = (self.hess[k] - v * rhs.hess[k] - cross) * inv_b;
                     k += 1;
                 }
             }

@@ -28,6 +28,39 @@
 //! `Real::Passive` associated type ties an active type back to the
 //! passive type it wraps.
 //!
+//! # The passive-reference rule
+//!
+//! **A mode determines which derivatives are available. It does not
+//! determine the number that comes out.** Every operation must produce a
+//! bit-identical value in every mode, and where an active mode would
+//! otherwise differ, the active mode is brought to the passive result —
+//! not the reverse.
+//!
+//! `f64` is the reference not because it is the more accurate candidate in
+//! general, but because a crate offering one generic body under several
+//! modes needs one of them to be the referent, and the mode without AD
+//! machinery is what a caller comparing against a hand-written
+//! implementation will have. It is also the only mode whose result a user
+//! can reproduce without this crate.
+//!
+//! The rule has a corollary that is easy to violate by accident: **an
+//! intermediate held only to form partial derivatives must not decide the
+//! operation's value.** An operation may compute such an intermediate; it
+//! may not let it change the value's rounding. Division is the case where
+//! this bites. A quotient recorded as `a * (1/b)` rounds twice where
+//! `a / b` rounds once, and the two land on different `f64`s for roughly a
+//! quarter of operand pairs — so an active mode that reuses the reciprocal
+//! it needs for `∂/∂a = 1/b` would return a value up to 1 ulp away from
+//! what `f64` returns for the same inputs. Every `Div` impl in this crate
+//! therefore records `a / b` and keeps the reciprocal for the partials
+//! alone.
+//!
+//! An implementor of a future mode inherits this obligation. The property
+//! is asserted in `tests/division_value_identity.rs` over a randomised
+//! sweep, and `tests/real_uniformity.rs` evaluates one body containing
+//! every arithmetic operation under all four implementors; a mode that
+//! reintroduces the divergence fails there rather than in a caller.
+//!
 
 
 use crate::passive::Passive;

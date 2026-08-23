@@ -18,7 +18,7 @@ to your program as it runs.
 
 ```toml
 [dependencies]
-xad-rs = "6.0"
+xad-rs = "6.1"
 ```
 
 Requires Rust 1.85 or newer (edition 2024).

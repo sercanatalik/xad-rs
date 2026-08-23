@@ -409,8 +409,14 @@ impl_areal_binop!(Mul, mul, (a, b, a_s, b_s) => {
 });
 impl_areal_binop!(Div, div, (a, b, a_s, b_s) => {
     // d(a/b) = da/b - a*db/b^2
+    //
+    // The value is the correctly rounded quotient, NOT `a * inv_b`: that
+    // spelling rounds twice and lands up to 1 ulp away from what `a / b`
+    // gives, which would make the number depend on the mode it was computed
+    // in. `inv_b` is kept, but only for the partials. See the passive-
+    // reference rule in `crate::real`.
     let inv_b = T::one() / b;
-    record_binary(a * inv_b, a_s, inv_b, b_s, -a * inv_b * inv_b)
+    record_binary(a / b, a_s, inv_b, b_s, -a * inv_b * inv_b)
 });
 
 // AReal op T (scalar on RHS)
@@ -424,8 +430,9 @@ impl_areal_binop_scalar_rhs!(Mul, mul, (a, r, a_s) => {
     record_unary(a * r, a_s, r)
 });
 impl_areal_binop_scalar_rhs!(Div, div, (a, r, a_s) => {
+    // Quotient for the value, reciprocal for the partial — see above.
     let inv = T::one() / r;
-    record_unary(a * inv, a_s, inv)
+    record_unary(a / r, a_s, inv)
 });
 
 // scalar op AReal (the orphan rule forces a concrete scalar type)
@@ -440,8 +447,9 @@ impl_scalar_lhs_areal_binop!(Mul, mul, (l, r, r_s) => {
 });
 impl_scalar_lhs_areal_binop!(Div, div, (l, r, r_s) => {
     // d(a/x) = -a/x^2 * dx
+    // Quotient for the value, reciprocal for the partial — see above.
     let inv = 1.0 / r;
-    record_unary(l * inv, r_s, -l * inv * inv)
+    record_unary(l / r, r_s, -l * inv * inv)
 });
 
 // Negation

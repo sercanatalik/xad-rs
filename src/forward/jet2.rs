@@ -256,9 +256,16 @@ impl_scalar_lhs_jet2_binop!(Mul, mul, (l, r) => Jet2 {
 });
 
 // --- Div ---
-// a/b = a * (1/b)
-// (1/b)'  = -b'/b^2
-// (1/b)'' = 2 b'^2/b^3 - b''/b^2
+// The *derivatives* go through the reciprocal jet, as they always have:
+//   (1/b)'  = -b'/b^2
+//   (1/b)'' = 2 b'^2/b^3 - b''/b^2
+// then the product rule for `a * (1/b)`.
+//
+// The *value* does not. `a * (1/b)` rounds twice and lands up to 1 ulp away
+// from `a / b`, which would make the number this mode returns differ from the
+// number the passive scalar returns for the same operands. The quotient is
+// written back over the product's value, leaving both derivatives bit-for-bit
+// as before. See the passive-reference rule in `crate::real`.
 impl<T: Passive> Div for Jet2<T> {
     type Output = Jet2<T>;
     #[inline]
@@ -272,7 +279,10 @@ impl<T: Passive> Div for Jet2<T> {
             d1: -rhs.d1 * inv_b2,
             d2: two * rhs.d1 * rhs.d1 * inv_b3 - rhs.d2 * inv_b2,
         };
-        self * recip
+        let quotient = self.value / rhs.value;
+        let mut out = self * recip;
+        out.value = quotient;
+        out
     }
 }
 
@@ -280,9 +290,10 @@ impl<T: Passive> Div<T> for Jet2<T> {
     type Output = Jet2<T>;
     #[inline]
     fn div(self, rhs: T) -> Self {
+        // Quotient for the value, reciprocal for the derivatives — see above.
         let inv = T::one() / rhs;
         Jet2 {
-            value: self.value * inv,
+            value: self.value / rhs,
             d1: self.d1 * inv,
             d2: self.d2 * inv,
         }

@@ -1,26 +1,62 @@
 use xad_rs::{AReal, Jet1, Jet2, Real, Tape};
 
+/// The point the body is evaluated at. Chosen so the quotient below is one
+/// where a correctly rounded `a / b` and the two-rounding `a * (1/b)` land on
+/// different `f64`s — see `poly_point_distinguishes_the_two_quotient_forms`.
+const POLY_X0: f64 = 2.6;
+
+/// The shift in the denominator, chosen with `POLY_X0` for the same reason.
+const POLY_SHIFT: f64 = 1.1;
+
+/// `(x - 1)^2 / (x + 1.1)` — addition, subtraction, multiplication *and*
+/// division in one body.
+///
+/// The division is not decoration. A mode is supposed to change which
+/// derivatives are available, not which number comes out, and division is the
+/// operation where that property is easiest to lose: a quotient formed as
+/// `a * (1/b)` rounds twice where `a / b` rounds once. A body without a
+/// division cannot see that, which is how it went unnoticed here.
 fn poly<R: Real>(x: &R) -> R {
-    // (x - 1)^2 = x^2 - 2x + 1, equals 4 at x = 3
-    x.clone() * x.clone() - R::from(2.0_f64) * x.clone() + R::from(1.0_f64)
+    let num = x.clone() * x.clone() - R::from(2.0_f64) * x.clone() + R::from(1.0_f64);
+    num / (x.clone() + R::from(POLY_SHIFT))
+}
+
+/// The body above is only a gate on division at a point where the two
+/// spellings of its quotient actually differ — they agree for most inputs, and
+/// for *every* input whose numerator is a power of two, since rescaling by one
+/// is exact either way. Pin that, so moving `POLY_X0` cannot silently turn the
+/// test below back into one that passes against a reciprocal-built quotient.
+#[test]
+fn poly_point_distinguishes_the_two_quotient_forms() {
+    let num = POLY_X0 * POLY_X0 - 2.0 * POLY_X0 + 1.0;
+    let den = POLY_X0 + POLY_SHIFT;
+    assert_ne!(
+        num * (1.0 / den),
+        num / den,
+        "poly's evaluation point no longer distinguishes a/b from a*(1/b)"
+    );
 }
 
 #[test]
 fn poly_value_agrees_across_modes() {
-    assert_eq!(poly(&3.0_f64), 4.0);
+    // The passive scalar is the reference, and the comparison is bit-exact:
+    // an active mode may carry extra derivative information, but it does not
+    // get to return a different number.
+    let v_ref = poly(&POLY_X0);
 
-    let j1 = Jet1::new(3.0_f64, 1.0);
-    assert!((poly(&j1).value() - 4.0).abs() < 1e-12);
+    let j1 = Jet1::new(POLY_X0, 1.0);
+    assert_eq!(poly(&j1).value(), v_ref, "Jet1 value");
 
-    let j2 = Jet2::variable(3.0_f64);
-    assert!((poly(&j2).value() - 4.0).abs() < 1e-12);
+    let j2 = Jet2::variable(POLY_X0);
+    assert_eq!(poly(&j2).value(), v_ref, "Jet2 value");
 
     let mut tape = Tape::<f64>::new(true);
     tape.activate();
-    let mut x = AReal::new(3.0_f64);
+    let mut x = AReal::new(POLY_X0);
     AReal::register_input(std::slice::from_mut(&mut x), &mut tape);
-    assert!((poly(&x).value() - 4.0).abs() < 1e-12);
+    let got = poly(&x).value();
     Tape::<f64>::deactivate_all();
+    assert_eq!(got, v_ref, "AReal value");
 }
 
 // ============================================================================
