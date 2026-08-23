@@ -6,7 +6,8 @@ All notable changes to this project are documented in this file.
 
 ## [6.0.0] - 2026-08-23
 
-Initial release.
+**Relicensed to MIT.** Versions 0.4.1 through 5.1.0 were published under
+AGPL-3.0-or-later and remain available under that license; 6.0.0 onward is MIT.
 
 `xad-rs` computes exact, machine-precision derivatives of arbitrary numerical
 programs — no finite-difference error, no symbolic manipulation, just the
