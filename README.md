@@ -65,7 +65,10 @@ implementations at once.
 ### Mode-agnostic (one body, every mode)
 
 The Gaussian family is on `Real`, so a closed-form pricer is written once and
-evaluated in whichever mode the caller needs.
+evaluated in whichever mode the caller needs. The mode decides which
+derivatives come back with the price, not what the price is: every operation
+produces a bit-identical value in every mode, with the passive `f64` result as
+the reference.
 
 ```rust
 use xad_rs::{Jet2, Real, compute_gradient_rev};
