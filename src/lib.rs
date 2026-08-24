@@ -92,9 +92,9 @@
 //!
 //! | Module | Contents |
 //! |---|---|
-//! | [`real`] | The unified active-scalar trait [`Real`] |
+//! | [`real`] | The unified active-scalar trait [`Real`] and its copyable refinement [`CopyableReal`] |
 //! | [`passive`] | The passive-scalar bound [`Passive`] (`f64`) |
-//! | [`prelude`] | `Real`, `Passive`, `AReal`, `Jet1`, `Jet2`, `Tape`, `TapeStorage` |
+//! | [`prelude`] | `Real`, `CopyableReal`, `Passive`, `AReal`, `Jet1`, `Jet2`, `Tape`, `TapeStorage` |
 //! | [`forward`] | `Jet1`, `Jet2`, `Jet2Vec`, `JetK` |
 //! | [`reverse`] | `AReal` |
 //! | [`math`] | AD-aware transcendentals (`sin`, `exp`, `erf`, `norm_cdf`, ...) |
@@ -120,7 +120,7 @@ pub use forward::{Jet1, Jet2, Jet2Vec, JetK};
 pub use reverse::AReal;
 pub use tape::{Tape, TapeGuard, TapeStorage};
 pub use passive::Passive;
-pub use real::Real;
+pub use real::{CopyableReal, Real};
 
 
 // ---- re-exports: composite operations ----

@@ -4,6 +4,121 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-08-24
+
+### Changed — a generic body reads the way the mathematics does
+
+`Real` lets a numerical body be written once and evaluated in any mode. It did
+not let that body be *written* the way the formula reads. Two taxes fell on
+every generic expression, neither a correctness problem, both paid at every
+arithmetic site forever:
+
+- **A borrowed operand needed an explicit clone.** `Real` required no
+  `Copy`-like bound, so generic code could not use a value twice without
+  cloning it — even where the concrete mode was `f64` and the clone compiled
+  away.
+- **A passive operand had to be lifted at the call site.** A schedule weight,
+  a year fraction, a notional — `f64` by construction and never
+  differentiated — could not meet an active scalar without `R::from(..)`.
+
+A linear interpolation, the smallest non-trivial kernel there is, had to be
+spelled `y0.clone() + (y1 - y0) * R::from(w)`. It is now:
+
+```rust
+fn lerp<R: CopyableReal>(y0: R, y1: R, w: R::Passive) -> R {
+    y0 + (y1 - y0) * w
+}
+```
+
+**`Real` gains passive-operand bounds in both positions.** `x * tau` and
+`tau * x` both compile for a passive `tau`. The right-hand position is a
+supertrait bound on `Self`; the left-hand position is a bound on the `Passive`
+associated type, because `impl<T> Mul<Self> for T` is not writable — which is
+why the crate's scalar-left macros each name a concrete `f64`. A *bound* is
+not an impl and is not subject to the orphan rule: it obliges each mode to
+supply the concrete impls it already had. All four in-crate modes satisfied
+the new bounds with **no edit to any operator implementation**.
+
+**This is breaking for anyone implementing `Real` out of crate.** In-crate it
+is four modes and cost nothing. An out-of-crate mode must now provide
+`{Add, Sub, Mul, Div}` against its passive scalar in both operand positions.
+See the `Stability` note under 6.0.0: `Real` is public and unsealed, so this
+requires a major version even though every in-crate implementor updates itself.
+
+**It is not breaking for callers.** Existing code with explicit clones and
+lifts compiles unchanged — the release permits shorter spellings, it does not
+forbid the current ones. Adopting them is an unforced readability sweep.
+
+### Added
+
+- **`CopyableReal`** — `trait CopyableReal: Real + Copy`, blanket-implemented
+  for every `Real` that is `Copy`, so no mode implements it explicitly.
+  Re-exported from the crate root and the prelude. A body wanting to use an
+  operand twice without a clone asks for `CopyableReal`.
+
+  The bound is deliberately **not** on `Real` itself, and the reason is
+  forward-looking rather than present: every mode the crate ships today is
+  `Copy`, including `JetK`, whose storage is a fixed `[T; K]`. A `Copy` bound
+  on `Real` would exclude nothing that implements it and cost no migration.
+  What it would exclude is any mode carrying heap storage — and a dense
+  second-order mode is necessarily shaped that way, since its tangent count is
+  the input-space dimension. `Jet2Vec` is already held out of `Real` for a
+  separate reason (`From<f64>` cannot know that dimension); a `Copy` bound
+  would add a second obstacle, and unlike the first one it would be permanent,
+  unwindable only by another major release. So the bound sits on a sub-trait
+  and `Real` stays open.
+
+- `tests/operand_spelling_identity.rs` — the acceptance gate for this release.
+
+### Known constraint
+
+**Do not pin the passive type when a passive operand appears on the left.**
+Writing `R: Real<Passive = f64>` normalizes the projection away and with it
+the left-hand bounds: `x * tau` keeps compiling, `tau * x` stops. A body that
+wants a passive operand on the left must name `R::Passive` rather than pin it
+— which is the spelling a caller would reach for anyway. Held by a test.
+
+### No values changed
+
+Nothing here touches arithmetic. No operator body, no entry in the elementary
+table, and no tape path was modified; the diff is a trait header, an empty
+sub-trait, documentation, and two re-export lines. The cross-mode
+bit-identity guarantee that caught the 6.1.0 division defect passes unchanged.
+
+That guarantee is necessary but not sufficient here, and the distinction is
+the point of the new test. A type-level change can compile, pass every
+existing test, and still move numbers — because the shorter spelling resolves
+to a *different operator implementation* than the longer one (`tau * x`
+records a unary tape statement where `AReal::from(tau) * x` records a binary
+one; `x / tau` takes the scalar-RHS `Div` where `x / R::from(tau)` takes the
+two-`Real` one). Every pre-existing test uses only the longer spelling, so
+every one of them would have stayed green if the shorter spelling had landed a
+different number.
+
+So `tests/operand_spelling_identity.rs` writes one body twice — once with
+clones and lifts, once with neither — and compares them in all four modes on
+values and on every derivative each mode provides.
+
+**It compares term by term, not totals, and that is not a stylistic choice.**
+The first version of the test summed its terms and compared the sums;
+reverting a passive-position `Div` to the two-rounding `l * (1/r)` spelling did
+**not** fail it — the mutated term was around `0.4` against a total around
+`10`, so the 1-ulp error landed below the total's own ulp and was rounded
+away. The body now returns its ten terms and each is asserted at its own
+magnitude, one term per operator implementation under test. Verified against
+four separate reciprocal mutations (`f64/AReal`, `Jet1/f64`, `Jet2/f64`,
+`AReal/f64`): each fails, naming the term that moved. The evaluation point is
+itself pinned by a test to one where all three divisions in the body actually
+separate `a / b` from `a * (1/b)` — the first constants tried separated none
+of them.
+
+### Performance
+
+**Not measured, and therefore not claimed.** The crate has shipped no
+benchmark suite since 6.0.0. What can be said without measuring is structural:
+the release adds no arithmetic, and the blanket `impl<R: Real + Copy>
+CopyableReal for R {}` has no methods to dispatch.
+
 ## [6.1.0] - 2026-08-23
 
 ### Fixed — division now returns the same number in every mode

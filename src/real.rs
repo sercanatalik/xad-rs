@@ -103,9 +103,27 @@ pub trait Real:
     + Sub<Self, Output = Self>
     + Mul<Self, Output = Self>
     + Div<Self, Output = Self>
+    // Passive operand on the right: `x * tau` for a passive `tau`.
+    + Add<Self::Passive, Output = Self>
+    + Sub<Self::Passive, Output = Self>
+    + Mul<Self::Passive, Output = Self>
+    + Div<Self::Passive, Output = Self>
 {
     /// The underlying passive (non-AD) scalar type — typically [`f64`].
-    type Passive: Passive;
+    ///
+    /// The four operator bounds carried here are the *left*-hand passive
+    /// position — `tau * x`, with the passive scalar first. They sit on the
+    /// associated type rather than on `Self` because that is the only place
+    /// they can sit: `impl<T> Mul<Self> for T` is not writable, which is why
+    /// the per-mode macros (`impl_scalar_lhs_areal_binop` and its siblings)
+    /// each have to name a concrete `f64`. A bound is not an impl, so it is
+    /// not subject to the orphan rule — it merely obliges each mode to supply
+    /// the concrete impls it already had.
+    type Passive: Passive
+        + Add<Self, Output = Self>
+        + Sub<Self, Output = Self>
+        + Mul<Self, Output = Self>
+        + Div<Self, Output = Self>;
 
     /// Project the active scalar back to its underlying passive value,
     /// stripping any AD machinery.
@@ -203,6 +221,51 @@ pub trait Real:
     /// the winning branch.
     fn min(&self, other: &Self) -> Self;
 }
+
+/// [`Real`] for a mode whose values are [`Copy`] — the bound a generic body
+/// asks for when it wants to use an operand twice without spelling a clone.
+///
+/// ```
+/// use xad_rs::prelude::*;
+///
+/// // Linear interpolation, written the way the mathematics reads: `y0` is
+/// // used twice and `w` is a passive weight, and neither fact needs saying.
+/// fn lerp<R: CopyableReal>(y0: R, y1: R, w: R::Passive) -> R {
+///     y0 + (y1 - y0) * w
+/// }
+///
+/// assert_eq!(lerp(1.0_f64, 3.0, 0.5), 2.0);
+/// assert_eq!(lerp(Jet1::new(1.0, 1.0), Jet1::constant(3.0), 0.5).value(), 2.0);
+/// ```
+///
+/// # Why this is not a bound on `Real` itself
+///
+/// It could be, today: every mode this crate ships is `Copy`, including
+/// [`JetK`](crate::JetK), whose storage is a fixed `[T; K]` array. A `Copy`
+/// bound on [`Real`] would exclude nothing that implements it and cost no
+/// migration.
+///
+/// What it would exclude is any mode that carries heap storage.
+/// [`Jet2Vec`](crate::Jet2Vec) holds an `Array1` and a `Vec` and so can never
+/// be `Copy` — and a dense-Hessian mode is necessarily shaped like that,
+/// since its tangent count is the input-space dimension. `Jet2Vec` is already
+/// held out of `Real` for a separate reason (`From<f64>` cannot know that
+/// dimension); a `Copy` bound would add a second obstacle, and unlike the
+/// first one it would be permanent — unwindable only by another major
+/// release.
+///
+/// So the bound sits here instead. A body that wants the shorter spelling
+/// asks for `CopyableReal`; a body that wants to stay open to a
+/// heap-carrying mode asks for [`Real`] and keeps its clones. The passive
+/// operand bounds are on [`Real`] itself precisely because they carry no such
+/// cost: a heap-carrying mode can supply `f64 op Mode` impls, it just cannot
+/// become `Copy`.
+///
+/// The blanket implementation below means no mode implements this trait
+/// explicitly — being `Real` and `Copy` is the whole of it.
+pub trait CopyableReal: Real + Copy {}
+
+impl<R: Real + Copy> CopyableReal for R {}
 
 // ----------------------------------------------------------------------------
 // impl Real for f64 — the no-AD blanket so generic code over `R: Real`
