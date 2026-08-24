@@ -140,18 +140,55 @@ where
     F: FnOnce(&[AReal<T>]) -> AReal<T>,
 {
     let mut tape = Tape::<T>::new(true);
-    // RAII: the tape is deactivated when `_rec` drops, including on unwind
-    // from a panic inside `func`.
+    compute_gradient_rev_with(&mut tape, inputs, func)
+}
+
+/// [`compute_gradient_rev`] on a tape the caller owns.
+///
+/// Begins a fresh recording on `tape` — retaining its allocation from the
+/// previous recording — and returns with the tape inactive and still
+/// allocated, so the next call reuses it. This is the form to use in a loop
+/// over positions or scenarios: the bare driver pays a fresh `Tape::new` per
+/// call, and on a workload that records millions of statements per valuation
+/// that allocation is the cost. No tape is constructed here.
+///
+/// The arithmetic is the bare driver's exactly — reuse changes allocation,
+/// never a value or a derivative.
+///
+/// # Panics
+/// Panics if a tape is already active on this thread — recordings do not
+/// nest.
+///
+/// # Example
+///
+/// ```
+/// use xad_rs::ops::compute_gradient_rev_with;
+/// use xad_rs::{Real, Tape};
+///
+/// let mut tape = Tape::<f64>::new(true);
+/// for x in [1.0_f64, 2.0, 3.0] {
+///     let (v, g) = compute_gradient_rev_with(&mut tape, &[x], |v| v[0].clone() * v[0].clone());
+///     assert_eq!(v, x * x);
+///     assert_eq!(g[0], 2.0 * x);
+/// }
+/// ```
+pub fn compute_gradient_rev_with<T, F>(tape: &mut Tape<T>, inputs: &[T], func: F) -> (T, Vec<T>)
+where
+    T: TapeStorage,
+    F: FnOnce(&[AReal<T>]) -> AReal<T>,
+{
+    // RAII: a fresh recording on the retained allocation, deactivated when
+    // `_rec` drops — including on unwind from a panic inside `func`.
     let _rec = tape.record();
 
     let mut ad_inputs: Vec<AReal<T>> = inputs.iter().map(|&v| AReal::new(v)).collect();
-    AReal::register_input(&mut ad_inputs, &mut tape);
+    AReal::register_input(&mut ad_inputs, tape);
 
     let mut output = func(&ad_inputs);
-    AReal::register_output(std::slice::from_mut(&mut output), &mut tape);
-    output.set_adjoint(&mut tape, T::one());
+    AReal::register_output(std::slice::from_mut(&mut output), tape);
+    output.set_adjoint(tape, T::one());
     tape.compute_adjoints();
 
-    let gradient = ad_inputs.iter().map(|x| x.adjoint(&tape)).collect();
+    let gradient = ad_inputs.iter().map(|x| x.adjoint(tape)).collect();
     (output.value(), gradient)
 }

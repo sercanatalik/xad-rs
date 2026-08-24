@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [7.1.0] - 2026-08-24
+
+### Added — the reverse drivers on a tape the caller owns
+
+`compute_gradient_rev_with(tape, inputs, f)` and
+`compute_jacobian_rev_with(tape, inputs, f)`: each begins a fresh recording on
+the caller's tape through `Tape::record()`, retaining its allocation, and
+returns with the tape inactive and ready for the next call. The bare forms are
+unchanged in signature and now delegate — one recording body per driver, the
+bare spelling owning its tape and the `_with` spelling borrowing the caller's.
+Both forms return the same value and derivatives bit for bit, on a fresh tape
+and across reuse.
+
+The tape itself learned reuse in 6.x (`record()`, ~3× on many-small-tapes
+workloads); the drivers had not, and paid a fresh `Tape::new` per call. What
+made it measurable: a downstream lattice valuation records ~2.3 million
+statements per reverse pass, once per position per risk run.
+
+### Fixed
+
+`compute_jacobian_rev` scoped its activation with `activate()` /
+`deactivate_all()`, which a panic inside the function skipped, leaving the
+thread's tape active. It now uses the RAII guard the gradient driver already
+used; a panicking function leaves no tape active for either driver.
+
+### Dropped from the roadmap — second order through a generic body
+
+The 6.0 roadmap carried two items toward second-order sensitivities from a
+`Real`-generic body: `Real`-generic second-order drivers, and a `Real`
+implementation for `AReal<Jet1<_>>` storage. Neither is needed. `Jet2`
+implements `Real`, and the downstream library reached σ-gamma through a
+short-rate lattice, bond convexity, and the directional curvature of a P&L
+explain — each by instantiating one generic body at `Jet2`, with no backend
+change. Both items are dropped rather than deferred; a deferred item with no
+consumer is a promise nobody can plan against. What remains genuinely
+unreachable — a dense Hessian in one pass — is `Jet2Vec` as a `Real` mode,
+and it stays gated on a caller needing one.
+
 ## [7.0.0] - 2026-08-24
 
 ### Changed — a generic body reads the way the mathematics does

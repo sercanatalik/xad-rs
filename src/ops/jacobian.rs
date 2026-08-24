@@ -26,20 +26,51 @@ where
     F: Fn(&[AReal<T>]) -> Vec<AReal<T>>,
 {
     let mut tape = Tape::<T>::new(true);
-    tape.activate();
+    compute_jacobian_rev_with(&mut tape, inputs, func)
+}
+
+/// [`compute_jacobian_rev`] on a tape the caller owns.
+///
+/// Begins a fresh recording on `tape`, retaining its allocation, and returns
+/// with the tape inactive and still allocated for the next call. Constructs
+/// no tape; computes exactly what the bare driver computes.
+///
+/// # Panics
+/// Panics if a tape is already active on this thread — recordings do not
+/// nest.
+///
+/// # Example
+///
+/// ```
+/// use xad_rs::ops::compute_jacobian_rev_with;
+/// use xad_rs::Tape;
+///
+/// let mut tape = Tape::<f64>::new(true);
+/// let j = compute_jacobian_rev_with(&mut tape, &[2.0_f64, 3.0], |v| {
+///     vec![v[0].clone() * v[1].clone(), v[0].clone() + v[1].clone()]
+/// });
+/// assert_eq!(j[[0, 0]], 3.0);
+/// assert_eq!(j[[1, 1]], 1.0);
+/// ```
+pub fn compute_jacobian_rev_with<T, F>(tape: &mut Tape<T>, inputs: &[T], func: F) -> Array2<T>
+where
+    T: TapeStorage,
+    F: Fn(&[AReal<T>]) -> Vec<AReal<T>>,
+{
+    // RAII: deactivated when `_rec` drops, including on unwind from a panic
+    // inside `func` — which the former `activate` / `deactivate_all` pair did
+    // not survive.
+    let _rec = tape.record();
 
     let mut ad_inputs: Vec<AReal<T>> = inputs.iter().map(|&v| AReal::new(v)).collect();
-    AReal::register_input(&mut ad_inputs, &mut tape);
+    AReal::register_input(&mut ad_inputs, tape);
 
     let mut ad_outputs = func(&ad_inputs);
-    AReal::register_output(&mut ad_outputs, &mut tape);
+    AReal::register_output(&mut ad_outputs, tape);
 
     let in_slots: Vec<u32> = ad_inputs.iter().map(|i| i.slot()).collect();
     let out_slots: Vec<u32> = ad_outputs.iter().map(|o| o.slot()).collect();
-    let jacobian = jacobian_rows_serial(&tape, &in_slots, &out_slots);
-
-    Tape::<T>::deactivate_all();
-    jacobian
+    jacobian_rows_serial(tape, &in_slots, &out_slots)
 }
 
 /// One vector sweep over a finished recording: seed output `o` to 1 in

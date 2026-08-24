@@ -19,15 +19,15 @@
 //!
 //! See also (theory): [`docs/theory/04-second-order-and-k-jets.md`](https://github.com/sercanatalik/xad-rs/blob/main/docs/theory/04-second-order-and-k-jets.md).
 
-pub mod jacobian;
-pub mod hessian;
 pub mod derivative;
+pub mod hessian;
+pub mod jacobian;
 
-pub use jacobian::compute_jacobian_rev;
 pub use derivative::{
     compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_rev,
+    compute_gradient_rev_with,
 };
 pub use hessian::{
-    compute_full_hessian, compute_hessian, compute_hessian_k, compute_hessian_k_par,
-    DenseHessian,
+    DenseHessian, compute_full_hessian, compute_hessian, compute_hessian_k, compute_hessian_k_par,
 };
+pub use jacobian::{compute_jacobian_rev, compute_jacobian_rev_with};

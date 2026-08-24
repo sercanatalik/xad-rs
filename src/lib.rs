@@ -99,34 +99,33 @@
 //! | [`reverse`] | `AReal` |
 //! | [`math`] | AD-aware transcendentals (`sin`, `exp`, `erf`, `norm_cdf`, ...) |
 //! | [`tape`] | Reverse-mode tape and thread-local active-tape slot |
-//! | [`ops`] | `compute_derivative_fwd`, `compute_directional_derivative_fwd`, `compute_gradient_rev`, `compute_jacobian_rev`, `compute_hessian{,_k,_k_par}`, `compute_full_hessian` |
+//! | [`ops`] | `compute_derivative_fwd`, `compute_directional_derivative_fwd`, `compute_gradient_rev{,_with}`, `compute_jacobian_rev{,_with}`, `compute_hessian{,_k,_k_par}`, `compute_full_hessian` |
 
 // Keep rustdoc links honest: a doc link to a renamed/removed item is a
 // compile error, not a silently dead link.
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub(crate) mod elementaries;
-pub mod passive;
-pub mod real;
-pub mod tape;
-pub mod math;
 pub mod forward;
-pub mod reverse;
+pub mod math;
 pub mod ops;
+pub mod passive;
 pub mod prelude;
+pub mod real;
+pub mod reverse;
+pub mod tape;
 
 // ---- re-exports: positional types ----
 pub use forward::{Jet1, Jet2, Jet2Vec, JetK};
-pub use reverse::AReal;
-pub use tape::{Tape, TapeGuard, TapeStorage};
 pub use passive::Passive;
 pub use real::{CopyableReal, Real};
-
+pub use reverse::AReal;
+pub use tape::{Tape, TapeGuard, TapeStorage};
 
 // ---- re-exports: composite operations ----
-pub use ops::{
-    compute_hessian, compute_hessian_k, compute_hessian_k_par, compute_jacobian_rev,
-};
-pub use ops::{compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_rev};
 pub use ops::{DenseHessian, compute_full_hessian};
-
+pub use ops::{
+    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_rev,
+    compute_gradient_rev_with, compute_jacobian_rev_with,
+};
+pub use ops::{compute_hessian, compute_hessian_k, compute_hessian_k_par, compute_jacobian_rev};

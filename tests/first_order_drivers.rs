@@ -6,8 +6,9 @@
 //! driver — the gradient must be that driver's single row.
 
 use xad_rs::{
-    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_rev,
-    compute_jacobian_rev, AReal, Real, Tape,
+    AReal, Real, Tape, compute_derivative_fwd, compute_directional_derivative_fwd,
+    compute_gradient_rev, compute_gradient_rev_with, compute_jacobian_rev,
+    compute_jacobian_rev_with,
 };
 
 /// `f(x) = x³·ln(x)`; `f'(x) = 3x²·ln(x) + x²`.
@@ -126,7 +127,11 @@ fn gradient_equals_the_jacobians_single_row() {
     let (_, g) = compute_gradient_rev(&POINT, multi);
     let jac = compute_jacobian_rev(&POINT, |v: &[AReal<f64>]| vec![multi(v)]);
     assert_eq!(jac.shape(), &[1, 3]);
-    assert_eq!(g, jac.row(0).to_vec(), "gradient must be the Jacobian's row");
+    assert_eq!(
+        g,
+        jac.row(0).to_vec(),
+        "gradient must be the Jacobian's row"
+    );
 }
 
 #[test]
@@ -156,4 +161,119 @@ fn drivers_agree_on_a_body_written_once_against_the_trait() {
     // And the scalar driver on a one-input slice of the same shape.
     let (v_scalar, _) = compute_derivative_fwd(POINT[0], scalar);
     assert_eq!(v_scalar, scalar(&POINT[0]));
+}
+
+// --- the with-forms: a borrowed tape, reused ------------------------------------
+
+/// A reverse-mode body, as the reuse tests pass them around.
+type Body = fn(&[AReal<f64>]) -> AReal<f64>;
+
+/// Three functions of different recording sizes, to drive growth and shrink
+/// of a reused tape.
+fn small<R: Real>(v: &[R]) -> R {
+    v[0].clone() * v[1].clone()
+}
+fn large<R: Real>(v: &[R]) -> R {
+    let mut acc = v[0].clone();
+    for _ in 0..2_000 {
+        acc = (acc.clone() * v[1].clone()).sin() + v[2].clone();
+    }
+    acc
+}
+
+/// Bare vs `_with` on a fresh tape: the same value and gradient, bit for bit.
+#[test]
+fn the_with_form_on_a_fresh_tape_is_the_bare_form_exactly() {
+    let (v0, g0) = compute_gradient_rev(&POINT, multi);
+    let mut tape = Tape::<f64>::new(true);
+    let (v1, g1) = compute_gradient_rev_with(&mut tape, &POINT, multi);
+    assert_eq!(v0, v1);
+    assert_eq!(g0, g1);
+    assert!(
+        !tape.is_active(),
+        "the with-form must leave the tape inactive"
+    );
+}
+
+/// One tape reused across three different functions returns, for each,
+/// exactly what the bare form returns — reuse leaks nothing between
+/// recordings, growing and shrinking as the recordings do.
+#[test]
+fn reuse_across_functions_leaks_nothing() {
+    let mut tape = Tape::<f64>::new(true);
+    let fns: [Body; 3] = [multi, large, small];
+    for f in fns {
+        let (vb, gb) = compute_gradient_rev(&POINT, f);
+        let (vw, gw) = compute_gradient_rev_with(&mut tape, &POINT, f);
+        assert_eq!(vb, vw);
+        assert_eq!(gb, gw);
+    }
+    // And once more with the small one after the large: the retained
+    // capacity is a floor, not a cap, and the small recording is unaffected.
+    let (vb, gb) = compute_gradient_rev(&POINT, small);
+    let (vw, gw) = compute_gradient_rev_with(&mut tape, &POINT, small);
+    assert_eq!((vb, gb), (vw, gw));
+}
+
+/// The Jacobian with-form agrees entry by entry, on a fresh and a reused tape.
+#[test]
+fn the_jacobian_with_form_agrees_entry_by_entry() {
+    let f = |v: &[AReal<f64>]| vec![multi(v), small(v), v[2].clone().exp()];
+    let bare = compute_jacobian_rev(&POINT, f);
+    let mut tape = Tape::<f64>::new(true);
+    let fresh = compute_jacobian_rev_with(&mut tape, &POINT, f);
+    let _ = compute_jacobian_rev_with(&mut tape, &POINT, |v| vec![large(v)]);
+    let reused = compute_jacobian_rev_with(&mut tape, &POINT, f);
+    assert_eq!(bare, fresh);
+    assert_eq!(bare, reused);
+    assert!(!tape.is_active());
+}
+
+/// A panic inside the differentiated function leaves no tape active, for
+/// either driver, either form — the next call succeeds instead of hitting
+/// "a tape is already active".
+#[test]
+fn a_panicking_function_leaves_no_tape_active() {
+    let boom = |_: &[AReal<f64>]| -> AReal<f64> { panic!("inside the function") };
+    let boom_vec = |_: &[AReal<f64>]| -> Vec<AReal<f64>> { panic!("inside the function") };
+    assert!(std::panic::catch_unwind(|| compute_gradient_rev(&POINT, boom)).is_err());
+    assert!(std::panic::catch_unwind(|| compute_jacobian_rev(&POINT, boom_vec)).is_err());
+    let mut tape = Tape::<f64>::new(true);
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compute_jacobian_rev_with(&mut tape, &POINT, boom_vec)
+        }))
+        .is_err()
+    );
+    // The proof: a fresh recording opens without complaint on this thread.
+    let (v, _) = compute_gradient_rev(&POINT, multi);
+    assert!(v.is_finite());
+    let (v, _) = compute_gradient_rev_with(&mut tape, &POINT, multi);
+    assert!(v.is_finite());
+}
+
+/// The reuse figure, measured: bare (a fresh tape per call) against the
+/// with-form on one retained tape, on a recording of ~6k statements.
+/// Printed for the record; timing is not asserted.
+#[test]
+fn driver_reuse_measured() {
+    use std::time::Instant;
+    let n = 200;
+    let t0 = Instant::now();
+    for _ in 0..n {
+        let _ = compute_gradient_rev(&POINT, large);
+    }
+    let bare = t0.elapsed();
+    let mut tape = Tape::<f64>::new(true);
+    let t1 = Instant::now();
+    for _ in 0..n {
+        let _ = compute_gradient_rev_with(&mut tape, &POINT, large);
+    }
+    let reused = t1.elapsed();
+    println!(
+        "driver reuse: bare {:?} vs with-reused {:?} per call, ratio {:.2}x",
+        bare / n,
+        reused / n,
+        bare.as_secs_f64() / reused.as_secs_f64().max(1e-12)
+    );
 }
