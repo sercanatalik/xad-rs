@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [7.1.1] - 2026-08-24
+
+### Changed
+
+- `LICENSE.md` no longer carries a copyright line. The crate remains MIT-licensed;
+  no code changes.
+
 ## [7.1.0] - 2026-08-24
 
 ### Added — the reverse drivers on a tape the caller owns
