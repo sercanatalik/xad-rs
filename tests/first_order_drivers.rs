@@ -1,14 +1,15 @@
 //! First-order drivers: `compute_derivative_fwd`,
-//! `compute_directional_derivative_fwd`, `compute_gradient_rev`.
+//! `compute_directional_derivative_fwd`, `compute_gradient_fwd_k`,
+//! `compute_gradient_rev`.
 //!
-//! Each is checked against a closed form, and the two `Rⁿ → R` drivers are
+//! Each is checked against a closed form, and the three `Rⁿ → R` drivers are
 //! cross-checked against each other and against the existing Jacobian
 //! driver — the gradient must be that driver's single row.
 
 use xad_rs::{
     AReal, Real, Tape, compute_derivative_fwd, compute_directional_derivative_fwd,
-    compute_gradient_rev, compute_gradient_rev_with, compute_jacobian_rev,
-    compute_jacobian_rev_with,
+    compute_gradient_fwd_k, compute_gradient_rev, compute_gradient_rev_with,
+    compute_jacobian_rev, compute_jacobian_rev_with,
 };
 
 /// `f(x) = x³·ln(x)`; `f'(x) = 3x²·ln(x) + x²`.
@@ -120,6 +121,74 @@ fn gradient_matches_the_closed_form_and_the_forward_partials() {
             g[i]
         );
     }
+}
+
+/// `multi` has no division, so each K-lane partial is the `Jet1` partial bit
+/// for bit, whatever block it landed in: K < n (two blocks), K = n, K > n.
+#[test]
+fn k_lane_gradient_is_the_per_direction_forward_gradient_bit_for_bit() {
+    let want_value = multi(&POINT);
+    let jet1: Vec<f64> = (0..3)
+        .map(|i| {
+            let mut seed = [0.0; 3];
+            seed[i] = 1.0;
+            compute_directional_derivative_fwd(&POINT, &seed, multi).1
+        })
+        .collect();
+    let closed = multi_grad(&POINT);
+
+    let (v2, g2) = compute_gradient_fwd_k::<2, _>(&POINT, multi);
+    let (v3, g3) = compute_gradient_fwd_k::<3, _>(&POINT, multi);
+    let (v8, g8) = compute_gradient_fwd_k::<8, _>(&POINT, multi);
+    for (k, (v, g)) in [(2, (v2, &g2)), (3, (v3, &g3)), (8, (v8, &g8))] {
+        assert_eq!(v, want_value, "K={k}: value vs f64");
+        assert_eq!(g.len(), 3, "K={k}: gradient length");
+        assert_eq!(**g, jet1[..], "K={k}: gradient vs Jet1 per direction");
+        for i in 0..3 {
+            assert!((g[i] - closed[i]).abs() < 1e-13, "K={k}: grad[{i}] {} vs {}", g[i], closed[i]);
+        }
+    }
+}
+
+/// With a quotient in the body the K-lane and `Jet1` tangents accumulate in
+/// a different order, so they agree to a few ulp rather than to the bit;
+/// against reverse mode the same few-ulp bound applies to every body.
+#[test]
+fn k_lane_gradient_agrees_with_jet1_and_reverse_on_a_dividing_body() {
+    fn dividing<R: Real>(v: &[R]) -> R {
+        (v[0].clone() * v[1].clone() + v[2].sin()) / (v[1].clone() + v[2].clone() * v[2].clone())
+    }
+    let (vk, gk) = compute_gradient_fwd_k::<2, _>(&POINT, dividing);
+    let (vr, gr) = compute_gradient_rev(&POINT, dividing);
+    assert_eq!(vk, dividing(&POINT), "K-lane value vs f64");
+    assert_eq!(vk, vr, "K-lane value vs reverse value");
+    for i in 0..3 {
+        let mut seed = [0.0; 3];
+        seed[i] = 1.0;
+        let j1 = compute_directional_derivative_fwd(&POINT, &seed, dividing).1;
+        let tol = 8.0 * f64::EPSILON * (1.0 + j1.abs());
+        assert!((gk[i] - j1).abs() <= tol, "grad[{i}] K-lane {} vs Jet1 {j1}", gk[i]);
+        assert!((gk[i] - gr[i]).abs() <= tol, "grad[{i}] K-lane {} vs reverse {}", gk[i], gr[i]);
+    }
+}
+
+#[test]
+fn k_lane_gradient_records_nothing_on_an_active_tape() {
+    let mut tape = Tape::<f64>::new(true);
+    let _rec = tape.record();
+    let x = AReal::input(1.0, &mut tape);
+    let _touch = x * 2.0; // one statement, so the count below is not trivially zero
+    let before = (tape.num_statements(), tape.num_operations());
+    let (_, g) = compute_gradient_fwd_k::<4, _>(&POINT, multi);
+    assert_eq!(g.len(), 3);
+    assert_eq!((tape.num_statements(), tape.num_operations()), before);
+}
+
+#[test]
+fn k_lane_gradient_of_no_inputs_is_the_value_and_an_empty_gradient() {
+    let (v, g) = compute_gradient_fwd_k::<4, _>(&[], |_| xad_rs::JetK::constant(7.5));
+    assert_eq!(v, 7.5);
+    assert!(g.is_empty());
 }
 
 #[test]

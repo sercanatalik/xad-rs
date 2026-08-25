@@ -13,9 +13,10 @@
 //! distributing those independent blocks across a `rayon` worker pool.
 //! All three produce bit-identical results.
 //!
-//! [`derivative`] adds the two first-order shapes those drivers do not
-//! serve — a scalar derivative and a directional derivative in forward mode,
-//! and a gradient from one reverse sweep — so callers manage no tape by hand.
+//! [`derivative`] adds the first-order shapes those drivers do not serve — a
+//! scalar derivative and a directional derivative in forward mode, a gradient
+//! in `⌈n/K⌉` K-lane forward passes, and a gradient from one reverse sweep —
+//! so callers manage no tape by hand.
 //!
 //! See also (theory): [`docs/theory/04-second-order-and-k-jets.md`](https://github.com/sercanatalik/xad-rs/blob/main/docs/theory/04-second-order-and-k-jets.md).
 
@@ -24,8 +25,8 @@ pub mod hessian;
 pub mod jacobian;
 
 pub use derivative::{
-    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_rev,
-    compute_gradient_rev_with,
+    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_fwd_k,
+    compute_gradient_rev, compute_gradient_rev_with,
 };
 pub use hessian::{
     DenseHessian, compute_full_hessian, compute_hessian, compute_hessian_k, compute_hessian_k_par,

@@ -1,6 +1,6 @@
 [package]
 name = "xad-rs"
-version = "7.1.1"
+version = "7.2.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Sercan Atalik"]

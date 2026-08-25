@@ -4,7 +4,7 @@
 > as the *carrier of first-order Taylor data*, the chain rule on duals,
 > forward-mode AD as a Jacobian-vector product (JVP), the connection
 > to the tangent bundle, and the multi-direction extension that gives
-> `JetK`. Anchors: `Jet1`, `JetK`.
+> `JetK`. Anchors: `Jet1`, `JetK`, `ops::compute_gradient_fwd_k`.
 
 ## Overview
 
@@ -19,10 +19,13 @@ the multi-direction case — propagate against a full tangent vector
 instead of a single tangent scalar — is
 [`JetK<T, K>`](https://docs.rs/xad-rs/latest/xad_rs/forward/jetk/struct.JetK.html),
 which fixes the direction count at compile time and stores the tangents
-in a `[T; K]`. Used on its own, either is tape-free and allocation-free;
-`JetK`'s reason for existing, though, is to serve as the *storage scalar*
-of a reverse-mode tape, which is what turns the seed-matrix idea into an
-exact Hessian engine (chapter 04).
+in a `[T; K]`. Used on its own, either is tape-free and allocation-free,
+and both are `Real` modes: a generic body evaluates `K` input directions
+in one `JetK` pass, and
+[`compute_gradient_fwd_k`](https://docs.rs/xad-rs/latest/xad_rs/ops/derivative/fn.compute_gradient_fwd_k.html)
+drives `⌈n/K⌉` such passes for a full gradient with no tape. `JetK` has a
+second role as the *storage scalar* of a reverse-mode tape, which is what
+turns the seed-matrix idea into an exact Hessian engine (chapter 04).
 
 ## Theory
 

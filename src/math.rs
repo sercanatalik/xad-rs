@@ -13,6 +13,9 @@
 //!   [`ad::weighted_sum`], and [`ad::weighted_dot`], which record a whole
 //!   accumulation as one tape statement.
 //! - [`fwd`] — forward-mode variants that operate on [`Jet1`].
+//! - [`fwdk`] — the same forward-mode variants on the K-lane
+//!   [`JetK`]: every chain rule scales all
+//!   `K` tangent lanes at once.
 //!
 //! Transcendental methods directly on [`Jet2`](crate::forward::jet2::Jet2)
 //! and [`Jet2Vec`](crate::forward::jet2vec::Jet2Vec) live on those types
@@ -49,6 +52,7 @@
 
 use crate::reverse::areal::{record_binary_op, record_nary_op_bounded, record_unary_op, AReal};
 use crate::forward::jet1::Jet1;
+use crate::forward::jetk::JetK;
 use crate::passive::Passive;
 use crate::tape::TapeStorage;
 
@@ -82,6 +86,23 @@ macro_rules! stamp_fwd_unary {
             let result = ($val)(v);
             let deriv = ($d1)(v, result);
             Jet1::new(result, deriv * x.derivative())
+        }
+    };
+}
+
+// The K-lane stamp is the `Jet1` stamp with the single tangent replaced by
+// the lane array: `JetK::chain` scales every lane by the same `deriv` the
+// `Jet1` stamp multiplies its one tangent by, so lane `i` of the result is
+// bit-identical to the `Jet1` tangent seeded along direction `i`.
+macro_rules! stamp_fwdk_unary {
+    ($name:ident, $doc:literal, $val:expr, $d1:expr, $d2:expr) => {
+        #[doc = $doc]
+        #[inline]
+        pub fn $name<T: Passive, const K: usize>(x: &JetK<T, K>) -> JetK<T, K> {
+            let v = x.value;
+            let result = ($val)(v);
+            let deriv = ($d1)(v, result);
+            x.chain(result, deriv)
         }
     };
 }
@@ -344,6 +365,70 @@ pub mod fwd {
         if a.value() <= b.value() { *a } else { *b }
     }
 
+}
+
+/// AD-aware math functions for `JetK` (K-lane forward mode).
+///
+/// Stamped from the same derivative table as [`fwd`], so every unary here
+/// computes the value and the per-lane tangent factor with exactly the
+/// closures `fwd` uses; the binaries below mirror `fwd`'s hand-written set
+/// through [`JetK::chain2`](crate::forward::jetk::JetK), sharing
+/// `pow_d_base`.
+pub mod fwdk {
+    use super::*;
+
+    crate::elementaries::for_each_unary_elementary!(stamp_fwdk_unary);
+
+    #[inline]
+    pub fn atan2<T: Passive, const K: usize>(y: &JetK<T, K>, x: &JetK<T, K>) -> JetK<T, K> {
+        let yv = y.value;
+        let xv = x.value;
+        let result = yv.atan2(xv);
+        let denom = xv * xv + yv * yv;
+        y.chain2(*x, result, xv / denom, -yv / denom)
+    }
+
+    #[inline]
+    pub fn pow<T: Passive, const K: usize>(base: &JetK<T, K>, exponent: &JetK<T, K>) -> JetK<T, K> {
+        let bv = base.value;
+        let ev = exponent.value;
+        let result = bv.powf(ev);
+        let d_base = pow_d_base(bv, ev, result);
+        let d_exp = result * bv.ln();
+        base.chain2(*exponent, result, d_base, d_exp)
+    }
+
+    #[inline]
+    pub fn powf<T: Passive, const K: usize>(base: &JetK<T, K>, exponent: T) -> JetK<T, K> {
+        let bv = base.value;
+        let result = bv.powf(exponent);
+        base.chain(result, pow_d_base(bv, exponent, result))
+    }
+
+    #[inline]
+    pub fn powi<T: Passive, const K: usize>(base: &JetK<T, K>, exponent: i32) -> JetK<T, K> {
+        let bv = base.value;
+        let result = bv.powi(exponent);
+        let deriv = T::from(exponent).unwrap() * bv.powi(exponent - 1);
+        base.chain(result, deriv)
+    }
+
+    #[inline]
+    pub fn hypot<T: Passive, const K: usize>(x: &JetK<T, K>, y: &JetK<T, K>) -> JetK<T, K> {
+        let xv = x.value;
+        let yv = y.value;
+        let result = xv.hypot(yv);
+        let inv_r = T::one() / result;
+        x.chain2(*y, result, xv * inv_r, yv * inv_r)
+    }
+
+    pub fn max<T: Passive, const K: usize>(a: &JetK<T, K>, b: &JetK<T, K>) -> JetK<T, K> {
+        if a.value >= b.value { *a } else { *b }
+    }
+
+    pub fn min<T: Passive, const K: usize>(a: &JetK<T, K>, b: &JetK<T, K>) -> JetK<T, K> {
+        if a.value <= b.value { *a } else { *b }
+    }
 }
 
 /// Error function `erf(x)` on a passive scalar.

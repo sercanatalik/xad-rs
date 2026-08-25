@@ -66,7 +66,7 @@ You can characterize an AD problem by three numbers:
    extension via multivariate dual numbers that gives `JetK`, and
    the differential-geometric interpretation as the tangent bundle.
    Anchors: `Jet1`, `JetK`, `ops::compute_derivative_fwd`,
-   `ops::compute_directional_derivative_fwd`.
+   `ops::compute_directional_derivative_fwd`, `ops::compute_gradient_fwd_k`.
 3. [**03 — Reverse mode and taped adjoints**](theory/03-reverse-mode-and-taped-adjoints.md).
    The linearised computation graph, the adjoint recurrence derived
    from the chain rule, the Baur–Strassen theorem and the cheap-

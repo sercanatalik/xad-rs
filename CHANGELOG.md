@@ -4,6 +4,85 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [7.2.0] - 2026-08-25
+
+### Added — the K-lane forward dual is a `Real` mode
+
+`JetK<f64, K>` implements `Real` for every `K`, with `Passive = f64`, and so
+inhabits `CopyableReal` through the blanket impl. A body written once as
+`fn f<R: Real>` now evaluates `K` input directions in one tape-free pass:
+seed lane `i` of input `xᵢ` and read `∂f/∂xᵢ` from lane `i` of the output.
+The pieces the type lacked to qualify: `From<f64>` / `From<i32>`, the four
+operators against `f64` in both operand positions with reference forms, the
+fused aggregates as lane loops in `Jet1`'s operation order, and reference
+permutations of `JetK op JetK`.
+
+`compute_gradient_fwd_k::<K, _>(inputs, f) -> (f64, Vec<f64>)`: the full
+gradient in `⌈n/K⌉` identity-seeded forward passes, constructing and
+activating no tape — the forward counterpart of `compute_gradient_rev`.
+
+`math::fwdk`: the forward-mode math functions on `JetK`, stamped from the
+same elementary table as `math::fwd`.
+
+`examples/jetk_gradient.rs`: one `Real`-generic body under reverse mode
+(fresh and warm tape), `Jet1 × n`, and `JetK<K>` at K ∈ {4, 8, 16}, on a
+six-input Garman–Kohlhagen call and a 30-tenor swap, every gradient
+cross-checked against the closed form to 1e-10. It is the crossover
+measurement the README cites.
+
+### Changed — `JetK`'s derivatives come from the table
+
+`JetK`'s unary elementaries were a local list of hand-written derivative
+closures in `jetk.rs` — a parallel copy of the elementary table that the
+table's uniformity test could not see, missing the `erf` family, and with no
+test in its own file. Both the `Float` surface and the new `Real` surface now
+delegate to `math::fwdk`, the closure list is deleted, a source-scan test
+keeps it deleted, and `JetK` is the fifth column of the elementaries
+uniformity test: for every table entry its lane-0 tangent equals `Jet1`'s bit
+for bit. Two hand-written derivatives differed from the table by an ulp
+(`sqrt`: `1/(2r)` where the table has `0.5/r`; `powf`: `e·b^(e−1)` where the
+table shares `pow_d_base`'s one-`powf` form) — `JetK` moved *toward* `Jet1`.
+
+### Measured — before and after
+
+Apple M4 Pro, rustc 1.92.0, fat LTO, five runs, medians of the examples'
+printed figures.
+
+- The K-wide Hessian engine (`swap_pricer`'s `compute_hessian_k::<8>` line,
+  the only existing figure whose code path this release touches): **13.2 µs
+  before, 12.1 µs after** (−8%, one `powf` per `pow` instead of two). Every
+  untouched example figure landed within ±2%.
+- The crossover (`jetk_gradient`): six-input body — reverse on a warm tape
+  222 ns, `Jet1 × 6` 218 ns, **`JetK<8>` 92 ns**, `JetK<16>` 109 ns; 30-input
+  body — reverse 1.00 µs, `Jet1 × 30` 8.4 µs, `JetK<8>` (4 passes) 1.37 µs,
+  **`JetK<16>` (2 passes) 0.91 µs**. Against one direction per pass the old
+  "reverse breaks even at n ≈ 4" holds; against K lanes the K-lane pass wins
+  outright for `n ≲ K` and still matches reverse at `n = 30` with K = 16.
+  Idle lanes are not free: `JetK<16>` trails `JetK<8>` at n = 6.
+
+### Not changed, and said so
+
+- `JetK::div`'s tangent is computed as `tₐ·inv + t_b·(−(a·inv)·inv)`;
+  `Jet1::div`'s as `(tₐ·b − a·t_b)·inv²`. Values are the correctly rounded
+  quotient in both (the 6.1.0 rule, re-swept under `JetK` in all three operand
+  positions); the tangents agree to a few ulp, not to the bit. Aligning them
+  is a separate change with its own justification, as the `Div` comment has
+  said since 6.1.0. Every "lane 0 equals `Jet1`" assertion in the suite is
+  bit-exact on division-free bodies and few-ulp where a body divides.
+- No arithmetic on any existing mode moved. The cross-mode value identity
+  sweep, the operand-spelling identity, the `Real` uniformity and
+  derivatives-agree suites, and the fused-aggregate suite each gained a `JetK`
+  arm and pass unchanged for the other four modes. A new test pins the
+  README's `Real` mode list to the modes the division sweep enumerates, so the
+  next mode cannot be documented without being swept.
+
+### Fixed — documentation
+
+The README claimed a `Real`-generic body reaches `AReal<JetK<f64, K>>`; no
+impl ever supported that (the K-wide Hessian engine takes a closure over
+`AReal<JetK<..>>`). The sentence now says what is true. `JetK`'s own docs and
+`docs/theory/02` no longer describe tape storage as its reason for existing.
+
 ## [7.1.1] - 2026-08-24
 
 ### Changed

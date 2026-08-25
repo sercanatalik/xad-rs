@@ -1,10 +1,10 @@
 //! The single source of truth for unary elementary derivatives.
 //!
 //! Every AD surface in this crate — `math::ad` (reverse, `AReal`),
-//! `math::fwd` (forward, `Jet1`), and the inherent methods on `Jet2` and
-//! `Jet2Vec` — stamps its unary elementaries from the one table below via
+//! `math::fwd` (forward, `Jet1`), `math::fwdk` (K-lane forward, `JetK`), and
+//! the inherent methods on `Jet2` and `Jet2Vec` — stamps its unary elementaries from the one table below via
 //! the X-macro [`for_each_unary_elementary`]. Adding an elementary here
-//! adds it to **all four** surfaces at once, and every surface computes
+//! adds it to **all five** surfaces at once, and every surface computes
 //! bit-identical values and first derivatives by construction (they share
 //! the same closures).
 //!
@@ -19,7 +19,7 @@
 //!     |x, r, d| d2);      // f''(x); d = f'(x) for reuse
 //! ```
 //!
-//! First-order consumers (`math::ad`, `math::fwd`) simply do not expand
+//! First-order consumers (`math::ad`, `math::fwd`, `math::fwdk`) simply do not expand
 //! the `d2` closure; second-order consumers (`Jet2`, `Jet2Vec`) expand
 //! all three.
 //!
@@ -182,8 +182,8 @@ pub(crate) use for_each_unary_elementary;
 mod tests {
     //! Table-stamped uniformity tests: one test per elementary, asserting
     //!
-    //! 1. all four AD surfaces (`math::ad`, `math::fwd`, `Jet2`, `Jet2Vec`)
-    //!    agree **bit-exactly** with the table closures evaluated on `f64`
+    //! 1. all five AD surfaces (`math::ad`, `math::fwd`, `math::fwdk`,
+    //!    `Jet2`, `Jet2Vec`) agree **bit-exactly** with the table closures evaluated on `f64`
     //!    (they share those closures, so any disagreement is a stamping
     //!    bug), and
     //! 2. the table's `d1`/`d2` closures agree with central finite
@@ -191,7 +191,7 @@ mod tests {
     //!    formula in the table itself — the one error mode the
     //!    bit-equality check cannot see).
 
-    use crate::forward::{Jet1, Jet2, Jet2Vec};
+    use crate::forward::{Jet1, Jet2, Jet2Vec, JetK};
     use crate::math;
     use crate::reverse::AReal;
     use crate::tape::Tape;
@@ -234,6 +234,12 @@ mod tests {
                         let j1 = math::fwd::$name(&Jet1::new(x0, 1.0));
                         assert_eq!(j1.value(), v_ref, "Jet1 value");
                         assert_eq!(j1.derivative(), d1_ref, "Jet1 d1");
+
+                        // --- forward JetK, lane 0 seeded, lane 1 not ---
+                        let jk = math::fwdk::$name(&JetK::<f64, 2>::new(x0, [1.0, 0.0]));
+                        assert_eq!(jk.value, v_ref, "JetK value");
+                        assert_eq!(jk.tangents[0], d1_ref, "JetK lane-0 d1");
+                        assert_eq!(jk.tangents[1], 0.0, "JetK unseeded lane");
 
                         // --- reverse AReal ---
                         let mut tape = Tape::<f64>::new(true);

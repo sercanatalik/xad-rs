@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "xad-rs"
-version = "7.1.1"
+version = "7.2.0"
 dependencies = [
  "approx",
  "ndarray",

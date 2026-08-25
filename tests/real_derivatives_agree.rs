@@ -1,4 +1,4 @@
-use xad_rs::{AReal, Jet1, Jet2, Real, Tape};
+use xad_rs::{AReal, Jet1, Jet2, JetK, Real, Tape};
 
 // f(x) = sin(x^2); f'(x) = 2x * cos(x^2)
 fn f<R: Real>(x: &R) -> R {
@@ -24,7 +24,10 @@ fn derivative_at_three_agrees_across_modes() {
     let j2 = Jet2::variable(x0);
     let j2_deriv = f(&j2).first_derivative();
 
-    // (4) AReal reverse
+    // (4) JetK forward, lane 0 seeded
+    let jk_deriv = f(&JetK::<f64, 2>::new(x0, [1.0, 0.0])).tangents[0];
+
+    // (5) AReal reverse
     let mut tape = Tape::<f64>::new(true);
     tape.activate();
     let mut x = AReal::new(x0);
@@ -36,11 +39,14 @@ fn derivative_at_three_agrees_across_modes() {
     let areal_deriv = x.adjoint(&tape);
     Tape::<f64>::deactivate_all();
 
-    // All four results within FD-limited tolerance.
+    // All five results within FD-limited tolerance.
     let tol = 1e-5;
     assert!((fd - analytic).abs() < tol, "FD vs analytic: {} vs {}", fd, analytic);
     assert!((j1_deriv - analytic).abs() < tol, "Jet1 vs analytic: {} vs {}", j1_deriv, analytic);
     assert!((j2_deriv - analytic).abs() < tol, "Jet2 vs analytic: {} vs {}", j2_deriv, analytic);
+    assert!((jk_deriv - analytic).abs() < tol, "JetK vs analytic: {} vs {}", jk_deriv, analytic);
+    // No division in `f`: the K-lane tangent is Jet1's, bit for bit.
+    assert_eq!(jk_deriv, j1_deriv, "JetK lane 0 vs Jet1");
     assert!((areal_deriv - analytic).abs() < tol, "AReal vs analytic: {} vs {}", areal_deriv, analytic);
 }
 
@@ -73,7 +79,10 @@ fn gaussian_derivative_agrees_across_modes() {
         // (3) Jet2 forward (first derivative)
         let j2_deriv = gaussian_body(&Jet2::variable(x0)).first_derivative();
 
-        // (4) AReal reverse
+        // (4) JetK forward, lane 0 seeded
+        let jk_deriv = gaussian_body(&JetK::<f64, 2>::new(x0, [1.0, 0.0])).tangents[0];
+
+        // (5) AReal reverse
         let mut tape = Tape::<f64>::new(true);
         let _rec = tape.record();
         let x = AReal::input(x0, &mut tape);
@@ -89,6 +98,7 @@ fn gaussian_derivative_agrees_across_modes() {
         let exact = 1e-13 * (1.0 + analytic.abs());
         assert!((j1_deriv - analytic).abs() < exact, "Jet1 at {x0}: {j1_deriv} vs {analytic}");
         assert!((j2_deriv - analytic).abs() < exact, "Jet2 at {x0}: {j2_deriv} vs {analytic}");
+        assert!((jk_deriv - analytic).abs() < exact, "JetK at {x0}: {jk_deriv} vs {analytic}");
         assert!(
             (areal_deriv - analytic).abs() < exact,
             "AReal at {x0}: {areal_deriv} vs {analytic}"

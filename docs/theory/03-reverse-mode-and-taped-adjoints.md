@@ -352,12 +352,20 @@ dimension. For a scalar-output function (`m = 1`):
 | Reverse sweep (`compute_adjoints`) | `~2P` | (reuses the tape) |
 | **Total gradient via reverse mode** | `~5P` | `O(P)` |
 
-The asymptotic win: this is `~5P` regardless of `n`. The forward-mode
-equivalent (`JetK` with `n` lanes) is `~(1 + n) P` with `O(n)`
-memory per live value. Crossover is at `n ≈ 4` in practice (when the
-constant in the `~5P` figure dominates the linear-in-`n` forward-mode
-cost). For `n = 30`, reverse is ~5× faster than forward; for
-`n = 100`, it is closer to ~20×.
+The asymptotic win: this is `~5P` regardless of `n`. Against *one
+direction per forward pass* (`Jet1`, `n` passes) the crossover is at
+`n ≈ 4` in practice; for `n = 30`, reverse is ~8× faster than `Jet1 × 30`
+(measured, `examples/jetk_gradient.rs`), and for `n = 100` closer to ~20×.
+
+The K-lane forward mode changes the constant, not the asymptote. `JetK<f64,
+K>` evolves `K` lanes per pass, so a gradient costs `⌈n/K⌉` passes of a
+value `K + 1` scalars wide — nominally `~(1 + n) P` in flops, but with
+`O(K)` memory per live value and no tape, and the lane loops vectorise.
+Measured on the same machine (`compute_gradient_fwd_k`, Apple M4 Pro): on a
+six-input body one `JetK<8>` pass is 2.4× faster than a warm-tape reverse
+sweep, and at `n = 30` two `JetK<16>` passes still match the sweep. The
+practical rule is `K ≈ n` rounded up to 4/8/16 for `n ≲ 16`; beyond that,
+reverse — the tape's `~5P` is flat in `n` and the lane count is not.
 
 For a vector-output function (`m > 1`), reverse mode needs *one sweep
 per output you want adjoints of*. If you want `m` rows of the Jacobian,

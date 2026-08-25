@@ -2,7 +2,7 @@
 //! `weighted_dot`): gradients must match the equivalent binary-operator
 //! composition exactly, while recording fewer tape statements and operands.
 
-use xad_rs::{math, AReal, Jet1, Jet2, Real, Tape};
+use xad_rs::{AReal, Jet1, Jet2, JetK, Real, Tape, math};
 
 fn grad_of<F>(inputs: &[f64], f: F) -> (f64, Vec<f64>, usize, usize)
 where
@@ -326,6 +326,31 @@ fn trait_aggregates_match_binary_chain_in_every_mode() {
     let want = 1.0 + YS[0] + WS[0] + WS[0] * YS[0];
     assert!((a1.derivative() - want).abs() < 1e-14);
 
+    // --- K-lane forward: lane 0 on xs[0], lane 1 on xs[1] — two gradient
+    // entries from one pass, each checked against the chain and the analytic
+    // partial. Lanes 2 and 3 are never seeded and must stay zero.
+    let xsk: Vec<JetK<f64, 4>> = (0..4)
+        .map(|i| {
+            let mut t = [0.0; 4];
+            if i < 2 {
+                t[i] = 1.0;
+            }
+            JetK::new(XS[i], t)
+        })
+        .collect();
+    let ysk: Vec<JetK<f64, 4>> = YS.iter().map(|&y| JetK::constant(y)).collect();
+    let ak = aggregates(&xsk, &ysk, &WS);
+    let ck = aggregates_by_chain(&xsk, &ysk, &WS);
+    assert_eq!(ak.value, v_agg, "JetK value vs f64");
+    assert_eq!(ak.value, ck.value, "JetK value vs chain");
+    assert_eq!(ak.tangents, ck.tangents, "JetK tangents vs chain");
+    for i in 0..2 {
+        let want = 1.0 + YS[i] + WS[i] + WS[i] * YS[i];
+        assert!((ak.tangents[i] - want).abs() < 1e-14, "JetK lane {i}: {} vs {want}", ak.tangents[i]);
+    }
+    assert_eq!(ak.tangents[2..], [0.0, 0.0]);
+    assert_eq!(ak.tangents[0], a1.derivative(), "JetK lane 0 vs Jet1 tangent");
+
     // --- forward second order ---
     let xs2: Vec<Jet2<f64>> = (0..4)
         .map(|i| if i == 0 { Jet2::variable(XS[i]) } else { Jet2::constant(XS[i]) })
@@ -394,6 +419,11 @@ fn trait_aggregates_handle_empty_slices() {
     assert_eq!(<Jet1<f64> as Real>::sum(&e1).value(), 0.0);
     let e2: [Jet2<f64>; 0] = [];
     assert_eq!(<Jet2<f64> as Real>::sum(&e2).value(), 0.0);
+    let ek: [JetK<f64, 3>; 0] = [];
+    assert_eq!(<JetK<f64, 3> as Real>::sum(&ek).value, 0.0);
+    assert_eq!(<JetK<f64, 3> as Real>::dot(&ek, &ek).tangents, [0.0; 3]);
+    assert_eq!(<JetK<f64, 3> as Real>::weighted_sum(&empty, &ek).value, 0.0);
+    assert_eq!(<JetK<f64, 3> as Real>::weighted_dot(&empty, &ek, &ek).value, 0.0);
 
     let mut tape = Tape::<f64>::new(true);
     let _rec = tape.record();

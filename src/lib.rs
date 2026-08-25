@@ -3,7 +3,7 @@
 //! Exact, machine-precision derivatives of arbitrary numerical programs —
 //! no finite-difference error, no symbolic manipulation.
 //!
-//! `xad-rs` ships four AD modes in a single crate, each suited to a
+//! `xad-rs` ships five AD modes in a single crate, each suited to a
 //! different problem shape.
 //!
 //! Conceptually, the crate is built around the [`Real`] trait — a unified
@@ -99,7 +99,7 @@
 //! | [`reverse`] | `AReal` |
 //! | [`math`] | AD-aware transcendentals (`sin`, `exp`, `erf`, `norm_cdf`, ...) |
 //! | [`tape`] | Reverse-mode tape and thread-local active-tape slot |
-//! | [`ops`] | `compute_derivative_fwd`, `compute_directional_derivative_fwd`, `compute_gradient_rev{,_with}`, `compute_jacobian_rev{,_with}`, `compute_hessian{,_k,_k_par}`, `compute_full_hessian` |
+//! | [`ops`] | `compute_derivative_fwd`, `compute_directional_derivative_fwd`, `compute_gradient_fwd_k`, `compute_gradient_rev{,_with}`, `compute_jacobian_rev{,_with}`, `compute_hessian{,_k,_k_par}`, `compute_full_hessian` |
 
 // Keep rustdoc links honest: a doc link to a renamed/removed item is a
 // compile error, not a silently dead link.
@@ -125,7 +125,7 @@ pub use tape::{Tape, TapeGuard, TapeStorage};
 // ---- re-exports: composite operations ----
 pub use ops::{DenseHessian, compute_full_hessian};
 pub use ops::{
-    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_rev,
-    compute_gradient_rev_with, compute_jacobian_rev_with,
+    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_fwd_k,
+    compute_gradient_rev, compute_gradient_rev_with, compute_jacobian_rev_with,
 };
 pub use ops::{compute_hessian, compute_hessian_k, compute_hessian_k_par, compute_jacobian_rev};

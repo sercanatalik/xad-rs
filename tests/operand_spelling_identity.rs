@@ -31,7 +31,7 @@
 //!
 //! See `openspec/changes/operand-ergonomics/design.md`, decision D3.
 
-use xad_rs::{AReal, CopyableReal, Jet1, Jet2, Real, Tape};
+use xad_rs::{AReal, CopyableReal, Jet1, Jet2, JetK, Real, Tape};
 
 /// Evaluation point, passive weight, passive rate. Pinned by
 /// [`the_point_distinguishes_the_two_quotient_forms`] to a place where a
@@ -157,6 +157,7 @@ fn every_in_crate_mode_is_copyable() {
     assert_copyable::<AReal<f64>>();
     assert_copyable::<Jet1<f64>>();
     assert_copyable::<Jet2<f64>>();
+    assert_copyable::<JetK<f64, 8>>();
 }
 
 /// Compare two spellings term by term on one projection of the mode.
@@ -194,6 +195,38 @@ fn spellings_agree_under_jet2() {
     assert_terms_agree(&b, &l, Jet2::first_derivative, "Jet2 d1");
     assert_terms_agree(&b, &l, Jet2::second_derivative, "Jet2 d2");
     assert_terms_agree(&b, &bare(X0, W, TAU).map(Jet2::constant), Jet2::value, "Jet2 vs f64");
+}
+
+#[test]
+fn spellings_agree_under_jetk() {
+    // Lane 0 seeded, lanes 1..4 not: the shorter spelling must agree with the
+    // lifted one on the value and on *every* lane, and must not leak anything
+    // into a lane that was never seeded.
+    let x = JetK::<f64, 4>::new(X0, [1.0, 0.0, 0.0, 0.0]);
+    let (b, l) = (bare(x, W, TAU), lifted(&x, W, TAU));
+    assert_terms_agree(&b, &l, |v| v.value, "JetK value");
+    for lane in 0..4 {
+        assert_terms_agree(&b, &l, |v| v.tangents[lane], &format!("JetK lane {lane}"));
+    }
+    assert_terms_agree(&b, &bare(X0, W, TAU).map(JetK::constant), |v| v.value, "JetK vs f64");
+    for i in 0..10 {
+        assert_eq!(b[i].tangents[1..], [0.0; 3], "JetK: term `{}` touched an unseeded lane", TERMS[i]);
+    }
+
+    // Lane 0 is `Jet1`'s tangent, bit for bit, on every term except the
+    // quotients: the two modes accumulate a division's tangent in a different
+    // operation order (see the `Div` impl in `jetk.rs`), so those agree to a
+    // few ulp rather than to the bit.
+    let j = bare(Jet1::new(X0, 1.0), W, TAU);
+    for i in 0..10 {
+        let (k, j1) = (b[i].tangents[0], j[i].derivative());
+        if TERMS[i].contains('/') {
+            let tol = 4.0 * f64::EPSILON * (1.0 + j1.abs());
+            assert!((k - j1).abs() <= tol, "JetK vs Jet1 tangent: term `{}`: {k} vs {j1}", TERMS[i]);
+        } else {
+            assert_eq!(k, j1, "JetK vs Jet1 tangent: term `{}` is not bit-identical", TERMS[i]);
+        }
+    }
 }
 
 #[test]

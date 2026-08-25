@@ -58,7 +58,7 @@
 //! An implementor of a future mode inherits this obligation. The property
 //! is asserted in `tests/division_value_identity.rs` over a randomised
 //! sweep, and `tests/real_uniformity.rs` evaluates one body containing
-//! every arithmetic operation under all four implementors; a mode that
+//! every arithmetic operation under all five implementors; a mode that
 //! reintroduces the divergence fails there rather than in a caller.
 //!
 
@@ -415,7 +415,7 @@ mod tests {
     ///
     /// - **table ⊆ trait**: for every table entry, the function-pointer
     ///   coercions below only compile if `Real` declares a method of that
-    ///   name *and* all four implementors provide it. A table entry that
+    ///   name *and* all five implementors provide it. A table entry that
     ///   failed to reach `Real` is a compile error, not a failed assertion.
     /// - **trait ⊆ table**: the trait body declares its unary methods
     ///   exclusively through `declare_real_unary!`, so the source assertion
@@ -424,7 +424,7 @@ mod tests {
     ///   that no method was added by hand beside the stamp.
     #[test]
     fn real_unary_method_set_equals_the_elementary_table() {
-        use crate::forward::{Jet1, Jet2};
+        use crate::forward::{Jet1, Jet2, JetK};
         use crate::reverse::AReal;
 
         let mut names: Vec<&'static str> = Vec::new();
@@ -435,6 +435,7 @@ mod tests {
                 let _: fn(&AReal<f64>) -> AReal<f64> = <AReal<f64> as Real>::$name;
                 let _: fn(&Jet1<f64>) -> Jet1<f64> = <Jet1<f64> as Real>::$name;
                 let _: fn(&Jet2<f64>) -> Jet2<f64> = <Jet2<f64> as Real>::$name;
+                let _: fn(&JetK<f64, 4>) -> JetK<f64, 4> = <JetK<f64, 4> as Real>::$name;
                 names.push(stringify!($name));
             }};
         }
@@ -467,6 +468,7 @@ mod tests {
             ("reverse/areal.rs", include_str!("reverse/areal.rs")),
             ("forward/jet1.rs", include_str!("forward/jet1.rs")),
             ("forward/jet2.rs", include_str!("forward/jet2.rs")),
+            ("forward/jetk.rs", include_str!("forward/jetk.rs")),
         ] {
             assert!(
                 !src.contains(&needle),

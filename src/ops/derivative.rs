@@ -13,20 +13,25 @@
 //! |---|---|---|---|
 //! | [`compute_derivative_fwd`] | forward | `R → R` | one evaluation, no tape |
 //! | [`compute_directional_derivative_fwd`] | forward | `Rⁿ → R` along one seed | one evaluation, no tape |
+//! | [`compute_gradient_fwd_k`] | forward, K lanes | `Rⁿ → R` | `⌈n/K⌉` evaluations, no tape |
 //! | [`compute_gradient_rev`] | reverse | `Rⁿ → R` | one recording + one sweep |
 //!
-//! The forward drivers create and activate **no tape**: `Jet1` carries its
-//! tangent in the value itself. The reverse driver does all the registration,
-//! adjoint seeding, and sweeping internally, so the caller supplies only the
-//! function and the point.
+//! The forward drivers create and activate **no tape**: `Jet1` and `JetK`
+//! carry their tangents in the value itself. The reverse driver does all the
+//! registration, adjoint seeding, and sweeping internally, so the caller
+//! supplies only the function and the point.
 //!
 //! Which to reach for is the usual forward/reverse trade-off: the forward
 //! directional driver costs one evaluation per direction, so recovering all
-//! `n` partials that way costs `n` evaluations, while
-//! [`compute_gradient_rev`] returns all `n` from a single sweep. Reverse
-//! breaks even around `n ~ 4`.
+//! `n` partials that way costs `n` evaluations; the K-lane driver recovers
+//! `K` partials per evaluation, so `⌈n/K⌉`; and [`compute_gradient_rev`]
+//! returns all `n` from a single sweep whatever `n` is, at the price of a
+//! tape. Against one direction at a time reverse breaks even around
+//! `n ~ 4`; against `K` lanes the crossover is measured in
+//! `examples/jetk_gradient.rs`.
 
 use crate::forward::jet1::Jet1;
+use crate::forward::jetk::JetK;
 use crate::passive::Passive;
 use crate::reverse::areal::AReal;
 use crate::tape::{Tape, TapeStorage};
@@ -101,6 +106,71 @@ where
         .collect();
     let out = func(&jets);
     (out.value(), out.derivative())
+}
+
+/// Value and full gradient of a many-input, single-output function, in
+/// K-lane forward mode — `⌈n/K⌉` evaluations and no tape.
+///
+/// Inputs are seeded in blocks of `K`: block `b` seeds lane `j` of input
+/// `bK + j` to one, evaluates `func` once, and reads `∂f/∂x_{bK+j}` from lane
+/// `j` of the output. For `n ≤ K` that is the whole gradient from one
+/// evaluation. No tape is created or activated, and nothing is recorded even
+/// if a tape happens to be active on the thread.
+///
+/// This is the forward counterpart of [`compute_gradient_rev`]: that driver
+/// costs one recording plus one sweep whatever `n` is, and streams a tape
+/// through memory twice; this one costs `⌈n/K⌉` evaluations of a value that
+/// is `K + 1` scalars wide, with no memory traffic beyond the live values.
+/// Which is faster for a given `n` and `K` is measured, not derived — see
+/// `examples/jetk_gradient.rs`.
+///
+/// The value is the same in every block (the value path is seed-independent);
+/// in debug builds this is asserted, in release the first block's is returned.
+///
+/// # Example
+///
+/// ```
+/// use xad_rs::ops::compute_gradient_fwd_k;
+/// use xad_rs::Real;
+///
+/// // f(x, y, z) = x²·y + sin(z) at (3, 4, 0): ∇f = (2xy, x², cos z) = (24, 9, 1).
+/// let (v, g) = compute_gradient_fwd_k::<2, _>(&[3.0_f64, 4.0, 0.0], |v| {
+///     v[0] * v[0] * v[1] + v[2].sin()
+/// });
+/// assert_eq!(v, 36.0);
+/// assert_eq!(g, vec![24.0, 9.0, 1.0]);   // two blocks: lanes (x, y), then (z)
+/// ```
+pub fn compute_gradient_fwd_k<const K: usize, F>(inputs: &[f64], func: F) -> (f64, Vec<f64>)
+where
+    F: Fn(&[JetK<f64, K>]) -> JetK<f64, K>,
+{
+    const { assert!(K > 0, "compute_gradient_fwd_k: K must be at least 1") };
+    let n = inputs.len();
+    let mut jets: Vec<JetK<f64, K>> = inputs.iter().map(|&v| JetK::constant(v)).collect();
+    let mut grad = vec![0.0; n];
+    if n == 0 {
+        return (func(&jets).value, grad);
+    }
+    let mut value: Option<f64> = None;
+    for block in (0..n).step_by(K) {
+        let end = (block + K).min(n);
+        for (lane, i) in (block..end).enumerate() {
+            jets[i].tangents[lane] = 1.0;
+        }
+        let out = func(&jets);
+        for (lane, i) in (block..end).enumerate() {
+            grad[i] = out.tangents[lane];
+            jets[i].tangents[lane] = 0.0;
+        }
+        match value {
+            None => value = Some(out.value),
+            Some(v) => debug_assert!(
+                v == out.value,
+                "compute_gradient_fwd_k: the value moved between seed blocks"
+            ),
+        }
+    }
+    (value.expect("at least one block ran"), grad)
 }
 
 /// Value and full gradient of a many-input, single-output function, from a

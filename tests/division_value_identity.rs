@@ -147,9 +147,11 @@ impl Report {
 // correction applied to the first form and missed at the other two would still
 // leave two thirds of the divisions a caller writes returning the wrong value.
 //
-// `JetK` and `Jet2Vec` have no scalar-operand `impl`s by design, so their
-// passive operand is lifted with `constant` — a distinct path through the same
-// `Div`, and the closest thing those types have to a mixed form.
+// `Jet2Vec` has no scalar-operand `impl`s by design, so its passive operand is
+// lifted with `constant` — a distinct path through the same `Div`, and the
+// closest thing that type has to a mixed form. `JetK` gained its scalar
+// operand forms when it became a `Real` mode; both those and the lifted
+// spelling are swept, since they are separate `impl`s.
 
 #[test]
 fn forward_first_order_division_matches_the_passive_quotient() {
@@ -184,23 +186,17 @@ fn k_lane_forward_division_matches_the_passive_quotient() {
     let mut r = Report::default();
     for (a, b) in operand_pairs() {
         let want = a / b;
-        let ja = JetK::<f64, 2>::new(a, [1.0, 0.0]);
-        let jb = JetK::<f64, 2>::new(b, [0.0, 1.0]);
+        let ja = JetK::<f64, 4>::new(a, [1.0, 0.0, 0.0, 0.0]);
+        let jb = JetK::<f64, 4>::new(b, [0.0, 1.0, 0.0, 0.0]);
         r.check("JetK active/active", a, b, (ja / jb).value, want);
-        r.check(
-            "JetK active/passive",
-            a,
-            b,
-            (ja / JetK::constant(b)).value,
-            want,
-        );
-        r.check(
-            "JetK passive/active",
-            a,
-            b,
-            (JetK::constant(a) / jb).value,
-            want,
-        );
+        r.check("JetK active/passive", a, b, (ja / b).value, want);
+        r.check("JetK passive/active", a, b, (a / jb).value, want);
+        r.check("JetK active/lifted", a, b, (ja / JetK::constant(b)).value, want);
+        r.check("JetK lifted/active", a, b, (JetK::constant(a) / jb).value, want);
+        // Unseeded: the tangent lanes must not influence the value.
+        let ua = JetK::<f64, 4>::constant(a);
+        let ub = JetK::<f64, 4>::constant(b);
+        r.check("JetK unseeded/unseeded", a, b, (ua / ub).value, want);
     }
     r.assert_clean();
 }
@@ -254,6 +250,31 @@ fn reverse_division_matches_the_passive_quotient() {
     }
     drop(_rec);
     r.assert_clean();
+}
+
+// ============================================================================
+// The sweep enumerates the modes by hand; the README enumerates them in prose.
+// A mode documented as implementing `Real` that the sweep does not cover is
+// exactly the gap this pins shut: the two lists must be the same list.
+// ============================================================================
+
+/// The `Real` modes the legs above sweep, in the README's order. (`Jet2Vec` is
+/// swept too, but it is not a `Real` mode and the README says so separately.)
+const REAL_MODES_IN_SWEEP: [&str; 5] = ["f64", "AReal<f64>", "Jet1<f64>", "Jet2<f64>", "JetK<f64, K>"];
+
+#[test]
+fn every_documented_real_mode_is_in_the_sweep() {
+    let readme = include_str!("../README.md");
+    let marker = "`Real` is implemented for ";
+    let start = readme.find(marker).expect("the README names the `Real` modes") + marker.len();
+    let rest = &readme[start..];
+    let end = rest.find(", so ").expect("the mode sentence continues with `, so`");
+    let documented: Vec<&str> = rest[..end].split('`').skip(1).step_by(2).collect();
+    assert_eq!(
+        documented, REAL_MODES_IN_SWEEP,
+        "README's `Real` mode list and the division sweep's mode list differ; \
+         a new mode joins the sweep before it is documented"
+    );
 }
 
 // ============================================================================

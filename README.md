@@ -18,7 +18,7 @@ to your program as it runs.
 
 ```toml
 [dependencies]
-xad-rs = "7.1"
+xad-rs = "7.2"
 ```
 
 Requires Rust 1.85 or newer (edition 2024).
@@ -36,29 +36,39 @@ Requires Rust 1.85 or newer (edition 2024).
 |---|---|---|
 | Just the value, no derivatives | `f64` | [01 — AD as a discipline](docs/theory/01-automatic-differentiation.md) |
 | One input direction, any number of outputs | `Jet1<T>`, or `compute_derivative_fwd` | [02 — Forward mode & dual numbers](docs/theory/02-forward-mode-and-dual-numbers.md) |
+| Full gradient, `n ≲ 16` inputs, no tape | `compute_gradient_fwd_k::<K, _>` — `⌈n/K⌉` passes of `JetK<f64, K>` | [02 — Forward mode & dual numbers](docs/theory/02-forward-mode-and-dual-numbers.md) |
 | Full gradient, any number of inputs, scalar output | `compute_gradient_rev`, or `Tape` + `AReal<T>` by hand | [03 — Reverse mode & taped adjoints](docs/theory/03-reverse-mode-and-taped-adjoints.md) |
 | Gamma / diagonal Hessian along one direction | `Jet2<T>` | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
 | Full n × n Hessian, n ≲ 50 | `Jet2Vec` via `compute_full_hessian` | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
 | Full n × n Hessian, larger n | `compute_hessian_k::<K, _>` — nested `Tape<JetK<f64, K>>` | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
 
-Reverse mode breaks even with forward around n ≈ 4 inputs, and the crate's own
-examples show it: at n = 1 `Jet1` is 17× faster than a tape pass
-(`fixed_rate_bond`), while at n = 30 reverse wins outright (`swap_pricer`). For a
-full Hessian, the K-wide engine needs `⌈n/K⌉` passes instead of `n` — on the
-30-input swap pricer that is the **entire 30 × 30 matrix in 4 passes (14.8 µs)**,
-against 25.3 µs for the diagonal alone via 30 seeded `Jet2` passes.
+Against one forward pass per input, reverse mode breaks even around n ≈ 4, and
+the crate's own examples show it: at n = 1 `Jet1` is 17× faster than a tape pass
+(`fixed_rate_bond`), while at n = 30 reverse beats `Jet1 × 30` by 8×
+(`jetk_gradient`). Against **K lanes per pass** the crossover moves out a long
+way: on the six-input Garman–Kohlhagen body one `JetK<8>` pass takes **92 ns
+against 222 ns** for a warm-tape reverse sweep (2.4×; 6× against a fresh tape),
+and on the 30-input swap two `JetK<16>` passes (910 ns) still edge the sweep
+(1.0 µs). `JetK<16>` loses to `JetK<8>` at n = 6 — idle lanes cost register
+pressure — so pick K ≈ n rounded up to the next of {4, 8, 16} (`jetk_gradient`,
+Apple M4 Pro, fat LTO). For a full Hessian, the K-wide engine needs `⌈n/K⌉`
+passes instead of `n` — on the 30-input swap pricer that is the **entire 30 × 30
+matrix in 4 passes (14.8 µs)**, against 25.3 µs for the diagonal alone via 30
+seeded `Jet2` passes.
 
-`Real` is implemented for `f64`, `AReal<f64>`, `Jet1<f64>`, and `Jet2<f64>`, so a
-kernel written once as `fn f<R: Real>(..) -> R` runs under all of them — including
-`AReal<JetK<f64, K>>`, which is how a `Real`-generic body gets an exact Hessian.
+`Real` is implemented for `f64`, `AReal<f64>`, `Jet1<f64>`, `Jet2<f64>`, and
+`JetK<f64, K>` for every K, so a kernel written once as `fn f<R: Real>(..) -> R`
+runs under all of them. The K-wide Hessian engine is the one surface a `Real`
+body does not reach directly: `compute_hessian_k` drives a closure written
+against `AReal<JetK<f64, K>>`, where the tape's storage scalar is itself a jet.
 `Jet2Vec` lacks the impl because the trait's `From<f64>` requires knowing the
 input-space dimension; use it directly for a full Hessian in one pass.
 
 The trait's unary method set is *generated* from the crate's single derivative
 table in `src/elementaries.rs` — the same table that stamps `math::ad`,
-`math::fwd`, and the `Jet2` / `Jet2Vec` inherent methods. There is no parallel
-list to drift: adding a table entry adds the trait method and all four
-implementations at once.
+`math::fwd`, `math::fwdk`, and the `Jet2` / `Jet2Vec` inherent methods. There is
+no parallel list to drift: adding a table entry adds the trait method and all
+five implementations at once.
 
 ## By mode — quick recipes
 
@@ -180,6 +190,7 @@ Run with `cargo run --release --example <name>`.
 | [`swap_pricer.rs`](examples/swap_pricer.rs) | 30-input IRS: DV01 via reverse, diagonal gamma via `Jet2`, and the full 30×30 Hessian via `compute_hessian_k` |
 | [`fx_option.rs`](examples/fx_option.rs) | Garman–Kohlhagen FX option greeks via reverse mode and `Jet2` spot-gamma, cross-checked against analytic |
 | [`fixed_rate_bond.rs`](examples/fixed_rate_bond.rs) | YTM, duration, convexity |
+| [`jetk_gradient.rs`](examples/jetk_gradient.rs) | The K-lane forward gradient against reverse mode and `Jet1 × n`, on a 6-input and a 30-input body — the crossover figures above, cross-checked against closed-form gradients |
 | [`jacobian.rs`](examples/jacobian.rs) | 4×4 Jacobian via reverse mode |
 | [`hessian.rs`](examples/hessian.rs) | 4×4 Hessian via `compute_full_hessian` with analytic cross-check |
 | [`adjoint_first_order.rs`](examples/adjoint_first_order.rs) | Full 4-input gradient in one reverse sweep |

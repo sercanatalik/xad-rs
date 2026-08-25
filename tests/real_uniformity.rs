@@ -1,4 +1,4 @@
-use xad_rs::{AReal, Jet1, Jet2, Real, Tape};
+use xad_rs::{AReal, Jet1, Jet2, JetK, Real, Tape};
 
 /// The point the body is evaluated at. Chosen so the quotient below is one
 /// where a correctly rounded `a / b` and the two-rounding `a * (1/b)` land on
@@ -50,6 +50,9 @@ fn poly_value_agrees_across_modes() {
     let j2 = Jet2::variable(POLY_X0);
     assert_eq!(poly(&j2).value(), v_ref, "Jet2 value");
 
+    let jk = JetK::<f64, 4>::new(POLY_X0, [1.0, 0.0, 0.0, 0.0]);
+    assert_eq!(poly(&jk).value, v_ref, "JetK value");
+
     let mut tape = Tape::<f64>::new(true);
     tape.activate();
     let mut x = AReal::new(POLY_X0);
@@ -62,7 +65,7 @@ fn poly_value_agrees_across_modes() {
 // ============================================================================
 // Extended Real surface: one generic body exercising the full elementary
 // set (including the methods added when Real grew from 7 to 24 methods),
-// run under all four Real implementors.
+// run under all five Real implementors.
 // ============================================================================
 
 /// A contrived kernel that touches every extended-`Real` method at least
@@ -130,6 +133,15 @@ fn extended_real_surface_agrees_across_modes() {
     assert_eq!(j2.value(), v_ref);
     assert_eq!(j2.first_derivative(), j1.derivative());
 
+    // K-lane forward: value bit-equal, and lane 0 is Jet1's tangent bit for
+    // bit — this body has no division, and every other operation's lane
+    // arithmetic is Jet1's. (A quotient's tangent would agree only to a few
+    // ulp: the two modes accumulate it in a different order.)
+    let jk = kitchen_sink(&JetK::<f64, 2>::new(x0, [1.0, 0.0]));
+    assert_eq!(jk.value, v_ref);
+    assert_eq!(jk.tangents[0], j1.derivative(), "JetK lane 0 vs Jet1 d1");
+    assert_eq!(jk.tangents[1], 0.0, "JetK unseeded lane");
+
     // Reverse AReal: value bit-equal, adjoint bit-equal to the Jet1 tangent.
     let mut tape = Tape::<f64>::new(true);
     let _rec = tape.record();
@@ -179,6 +191,14 @@ fn identities_are_neutral_in_every_mode() {
     assert_eq!(<Jet2<f64> as Real>::one().first_derivative(), 0.0);
     assert_eq!(<Jet2<f64> as Real>::one().second_derivative(), 0.0);
 
+    // K-lane forward: value and the seeded lane both survive; the identities
+    // carry no tangent in any lane.
+    let jk = through_identities(&JetK::<f64, 3>::new(x0, [0.0, 1.0, 0.0]));
+    assert_eq!(jk.value, x0);
+    assert_eq!(jk.tangents, [0.0, 1.0, 0.0]);
+    assert_eq!(<JetK<f64, 3> as Real>::zero().tangents, [0.0; 3]);
+    assert_eq!(<JetK<f64, 3> as Real>::one().tangents, [0.0; 3]);
+
     // Reverse: value and adjoint both survive.
     let mut tape = Tape::<f64>::new(true);
     let _rec = tape.record();
@@ -223,6 +243,11 @@ fn gaussian_family_agrees_across_modes() {
         let j2 = gaussians(&Jet2::variable(x0));
         assert_eq!(j2.value(), v_ref, "Jet2 value at x={x0}");
         assert_eq!(j2.first_derivative(), j1.derivative(), "Jet2 d1 at x={x0}");
+
+        // K-lane forward: value and lane 0 must match Jet1 bit-for-bit.
+        let jk = gaussians(&JetK::<f64, 2>::new(x0, [1.0, 0.0]));
+        assert_eq!(jk.value, v_ref, "JetK value at x={x0}");
+        assert_eq!(jk.tangents[0], j1.derivative(), "JetK d1 at x={x0}");
 
         // Reverse.
         let mut tape = Tape::<f64>::new(true);
