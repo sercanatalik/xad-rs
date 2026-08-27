@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [7.2.1] - 2026-08-27
+
+### Fixed — `Jet2` takes a power the way the passive scalar does
+
+A mode decides which derivatives are available, never which number comes out.
+`Div` has held that line since the reciprocal-quotient fix; `pow` had two
+breaches, both in `Jet2` and nowhere else.
+
+`Real::powi` routed through `powf(n as f64)`, because the derivative table is
+written in terms of a real exponent. `f64::powi` multiplies and `f64::powf`
+goes through `exp`/`ln` — different functions, landing on different `f64`s for
+**44%** of ordinary operands, and for a negative base `powf` is NaN where an
+integer power is defined. `Real::powf` composed `exp(v · ln u)`, which rounds
+three times where `powf` rounds once and disagrees on **55%**.
+
+Both now take their *value* from the passive operation and keep their
+derivatives from the form that carries both orders — the shape `Div` already
+uses. No derivative changed.
+
+`tests/power_value_identity.rs` sweeps every mode's `powi` and `powf` against
+the passive `f64` over a seeded operand set, both signs of the base, and pins
+the premise that the two spellings really do disagree — so a base range drawn
+where they happen to agree cannot turn the sweep into one that checks nothing.
+
+Found from a product-level bit-identity gate one library up: two lattice-priced
+families disagreed between the passive and second-order forward modes — a
+`powi(j)` discount ladder — at 9e-16 and 9e-13 relative, while first-order
+forward and reverse agreed with passive exactly.
+
 ## [7.2.0] - 2026-08-25
 
 ### Added — the K-lane forward dual is a `Real` mode

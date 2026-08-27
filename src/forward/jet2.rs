@@ -432,12 +432,32 @@ impl crate::real::Real for Jet2<f64> {
     }
     #[inline]
     fn powf(&self, exponent: Self) -> Self {
-        // u^v = exp(v * ln(u)), composed via existing Jet2 primitives.
-        Jet2::exp(exponent * Jet2::ln(*self))
+        // Both derivatives come from `exp(v · ln u)`, which propagates first and
+        // second order through the existing primitives. The *value* is written
+        // back from `powf`, because `exp(v · ln u)` rounds three times where
+        // `powf` rounds once and the two land on different `f64`s — and `powf`
+        // is what the passive scalar and every other mode return for the same
+        // operands. Same shape as `Div`: derivatives from the composed form,
+        // value from the passive reference. See `crate::real`.
+        let mut out = Jet2::exp(exponent * Jet2::ln(*self));
+        out.value = self.value.powf(exponent.value);
+        out
     }
     #[inline]
     fn powi(&self, exponent: i32) -> Self {
-        Jet2::powf(*self, exponent as f64)
+        // An integer power is taken by `powi`, not by routing through `powf`:
+        // `f64::powi` multiplies and `f64::powf` goes through exp/ln, so they
+        // are different functions in the last bit for a majority of operands.
+        // Every other mode reaches `bv.powi(n)` here, and so must this one.
+        let v = self.value;
+        let n = f64::from(exponent);
+        let gp = n * v.powi(exponent - 1);
+        let gpp = n * (n - 1.0) * v.powi(exponent - 2);
+        Jet2 {
+            value: v.powi(exponent),
+            d1: gp * self.d1,
+            d2: gpp * self.d1 * self.d1 + gp * self.d2,
+        }
     }
     // Component-wise loops. Forward mode has no tape, so there is no fused
     // encoding to preserve — the accumulation propagates value and tangent
