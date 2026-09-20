@@ -13,12 +13,6 @@ the packed three-buffer tape layout that
 [chapter 5](theory/05-implementation-tradeoffs.md) describes, and the premise
 that a single generic body should evaluate in every mode.
 
-What is written here is Rust against that design rather than a translation of
-the C++ source. This project is not affiliated with the upstream authors, is
-not endorsed by them, and is not their responsibility. Questions about `xad-rs`
-belong on [its own tracker](https://github.com/sercanatalik/xad-rs/issues), not
-on theirs.
-
 If you want the original, in C++, from the people who designed it:
 <https://auto-differentiation.github.io/>.
 
