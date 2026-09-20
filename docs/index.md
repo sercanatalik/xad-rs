@@ -15,7 +15,7 @@
       <a class="xl-btn xl-btn-secondary" href="https://docs.rs/xad-rs">API on docs.rs</a>
     </div>
     <dl class="xl-facts">
-      <div><dt>Cargo.toml</dt><dd><code>xad-rs = "7.2"</code></dd></div>
+      <div><dt>Cargo.toml</dt><dd><code>xad-rs = "8.0"</code></dd></div>
       <div><dt>MSRV</dt><dd>Rust 1.85, edition 2024</dd></div>
       <div><dt>Licence</dt><dd>MIT</dd></div>
     </dl>
