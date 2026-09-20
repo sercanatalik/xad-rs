@@ -8,8 +8,8 @@
 <header class="xl-hero">
   <div class="xl-hero-text">
     <div class="xl-eyebrow">Automatic differentiation · Rust</div>
-    <h1 class="xl-title">The chain rule, applied to your program as it runs.</h1>
-    <p class="xl-lede">Exact automatic differentiation for Rust. Forward and reverse mode, first and second order, behind one mode-agnostic <code>Real</code> trait. No finite-difference error, no symbolic manipulation: every derivative to machine precision, from the code you already run.</p>
+    <h1 class="xl-title">Write the function once. Choose the derivatives later.</h1>
+    <p class="xl-lede">A body written once as <code>fn f&lt;R: Real&gt;</code> runs under forward mode, reverse mode, first order or second. The mode decides which derivatives come back with the value, never what the value is. Every one of them is exact to machine precision: no bump size to tune, no symbolic blow-up.</p>
     <div class="xl-actions">
       <a class="xl-btn xl-btn-primary" href="theory/01-automatic-differentiation.html">Read the theory</a>
       <a class="xl-btn xl-btn-secondary" href="https://docs.rs/xad-rs">API on docs.rs</a>
