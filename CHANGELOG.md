@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — unit operands are encoded, not multiplied
+
+An operand whose multiplier is exactly `±1` — every `+`, `−`, negation,
+`max`/`min`, and the fused `sum` — is now recorded with two flag bits in its
+slot word (`Tape::UNIT`, `Tape::NEG`) instead of a stored multiplier, and both
+reverse sweeps accumulate it by a plain add or subtract. A census of the
+30-tenor swap's tape found 63% of its operands are `±1`; each was an 8-byte
+load and an `fmul` on the sweep's latency-critical store→load chain for
+`f64`, and a 72-byte load plus ~25 flops in the `JetK<f64, 8>` Hessian engine.
+`d ± a` is the same `f64` as `d + (±1)·a`, so **no derivative bit changed**;
+statement and operand counts are unchanged; the layout is unchanged.
+`tests/unit_operands.rs` pins the closed-form gradient, the counts, that no
+flag bit ever reaches an `AReal::slot()`, scalar-vs-vector sweep bit identity,
+and the K-lane engine's value part against the scalar sweep bit for bit.
+
+**Breaking limit**: a tape now holds at most `2^30` variables
+(`Tape::MAX_VARIABLES`), down from `2^32 − 1`; `push_nullary` asserts it. A
+`2^30`-variable `f64` tape is over 20 GB.
+
+### Measured — before and after
+
+Apple M-series, rustc 1.92.0, fat LTO, five runs, medians
+(`openspec/changes/archive/2026-09-20-unit-multiplier-operands/bench/`).
+Engine controls are the reverse-mode and Hessian-engine figures; the
+forward-only figures are noise controls and landed within 4%.
+
+- `swap_pricer` reverse delta (fresh tape): **1630 → 1487 ns**; its
+  `compute_hessian_k::<8>` 30×30 line 13.7 → 13.2 µs.
+- Probe, the same swap body on a warm tape: **1159–1184 → 837 ns** record +
+  sweep; record alone 442 → 420 ns, so the limit assert costs nothing visible.
+- `jetk_gradient` swap body, warm reverse: 964 → 942 ns (that body has fewer
+  unit operands per statement); Garman–Kohlhagen warm reverse 207 → 208 ns
+  (its tape is dominated by non-unit ops).
+
 ### Changed — `erf` is a piecewise rational, at the same precision, 7–25× faster
 
 `math::erf_impl` is now the Sun `s_erf.c` piecewise minimax rational (four

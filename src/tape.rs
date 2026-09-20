@@ -39,6 +39,20 @@
 //! Keeping the per-op `push(T::zero())` out of the recording fast path
 //! makes recording ~1.9× faster on op-heavy kernels.
 //!
+//! # Unit operands
+//!
+//! An operand whose multiplier is exactly `+1` or `−1` — every `+`, `−`,
+//! negation, `max`/`min`, and the fused `sum` — is recorded with two flag
+//! bits in its slot word instead of a stored multiplier: bit 31
+//! ([`Tape::UNIT`]) marks it, bit 30 ([`Tape::NEG`]) carries the sign, and
+//! the multiplier field is written as zero and never read. Both sweeps mask
+//! the slot and accumulate such an operand by a plain add or subtract, which
+//! takes the multiplier load and the multiply off the sweep's
+//! latency-critical path. `d + (±1)·a` and `d ± a` are the same `f64`, so the
+//! encoding changes no derivative bit. The cost is slot space: a tape holds at
+//! most [`Tape::MAX_VARIABLES`] (`2^30`) variables, asserted in
+//! [`Tape::push_nullary`].
+//!
 //! # Hot-path recording helpers
 //!
 //! The three fixed-arity push methods — [`Tape::push_nullary`],
@@ -145,6 +159,17 @@ pub struct Tape<T: TapeStorage> {
 unsafe impl<T: TapeStorage> Send for Tape<T> {}
 
 impl<T: TapeStorage> Tape<T> {
+    /// Operand-slot flag: the multiplier is exactly `±1` and is not stored
+    /// (see the module-level "Unit operands" section).
+    pub const UNIT: u32 = 1 << 31;
+    /// Operand-slot flag: a unit operand with multiplier `−1`.
+    pub const NEG: u32 = 1 << 30;
+    /// Mask recovering the slot number from an operand's slot word.
+    pub const SLOT_MASK: u32 = (1 << 30) - 1;
+    /// The most variables one tape can hold: the two flag bits leave `2^30`
+    /// slot numbers. Registering one more panics in [`push_nullary`](Tape::push_nullary).
+    pub const MAX_VARIABLES: u32 = 1 << 30;
+
     /// Create a new tape. The `_activate` flag is accepted for backwards
     /// compatibility with the C++ XAD API shape but is **ignored**: you
     /// must always call [`Tape::activate`] explicitly after the tape
@@ -292,8 +317,84 @@ impl<T: TapeStorage> Tape<T> {
         // a dependency chain through the push's length update and costs ~25%
         // when recording onto a reused tape.
         let slot = (self.statements.len() - 1) as u32;
+        // Hard assert (not debug): the two flag bits in operand slot words
+        // leave 2^30 slot numbers, and a wrapped slot would corrupt the sweep
+        // silently. One predictable compare per statement; measured
+        // invisible on the examples protocol.
+        assert!(
+            slot < Self::MAX_VARIABLES,
+            "Tape::push_nullary: a tape holds at most 2^30 variables"
+        );
         self.statements.push(self.operations.len() as u32);
         slot
+    }
+
+    /// Fast path: record a statement whose single operand has multiplier
+    /// `+1` (`neg == false`) or `−1` (`neg == true`), encoded as a unit
+    /// operand (see the module docs). An inactive operand (`u32::MAX`) is
+    /// not pushed.
+    #[inline]
+    pub fn push_unary_unit(&mut self, operand_slot: u32, neg: bool) -> u32 {
+        if operand_slot != u32::MAX {
+            let flags = Self::UNIT | if neg { Self::NEG } else { 0 };
+            self.operations.push(Operation { multiplier: T::zero(), slot: operand_slot | flags });
+        }
+        self.push_nullary()
+    }
+
+    /// Fast path: record a statement with two unit operands (multipliers
+    /// `±1` given by `neg1` / `neg2`), the unit counterpart of
+    /// [`push_binary`](Tape::push_binary). Inactive operands are skipped.
+    #[inline]
+    pub fn push_binary_unit(&mut self, s1: u32, neg1: bool, s2: u32, neg2: bool) -> u32 {
+        let len = self.operations.len();
+        self.operations.reserve(2);
+        // SAFETY: as in `push_binary`. The inactive test is on the raw slot,
+        // before the flag bits are OR-ed in, so `u32::MAX` never lands in the
+        // buffer (invariant I3 in `compute_adjoints_to_impl`).
+        unsafe {
+            let p = self.operations.as_mut_ptr().add(len);
+            let f1 = Self::UNIT | if neg1 { Self::NEG } else { 0 };
+            let f2 = Self::UNIT | if neg2 { Self::NEG } else { 0 };
+            p.write(Operation { multiplier: T::zero(), slot: s1 | f1 });
+            let n1 = (s1 != u32::MAX) as usize;
+            p.add(n1).write(Operation { multiplier: T::zero(), slot: s2 | f2 });
+            let n = n1 + (s2 != u32::MAX) as usize;
+            self.operations.set_len(len + n);
+        }
+        self.push_nullary()
+    }
+
+    /// Unit-operand counterpart of
+    /// [`push_operands_bounded`](Tape::push_operands_bounded): each yielded
+    /// `(slot, neg)` is pushed as a unit operand with multiplier `+1`
+    /// (`false`) or `−1` (`true`). Backs the fused `sum`. Same `n_max`
+    /// contract; inactive slots are skipped.
+    #[inline]
+    pub fn push_operands_unit_bounded(
+        &mut self,
+        n_max: usize,
+        operands: impl IntoIterator<Item = (u32, bool)>,
+    ) {
+        let len = self.operations.len();
+        self.operations.reserve(n_max);
+        let mut iter = operands.into_iter();
+        // SAFETY: as in `push_operands_bounded`; the inactive test is on the
+        // raw slot before flagging.
+        unsafe {
+            let p = self.operations.as_mut_ptr().add(len);
+            let mut written = 0usize;
+            for (slot, neg) in iter.by_ref().take(n_max) {
+                let flags = Self::UNIT | if neg { Self::NEG } else { 0 };
+                p.add(written).write(Operation { multiplier: T::zero(), slot: slot | flags });
+                written += (slot != u32::MAX) as usize;
+            }
+            self.operations.set_len(len + written);
+        }
+        debug_assert!(
+            iter.next().is_none(),
+            "push_operands_unit_bounded: iterator yielded more than n_max operands"
+        );
     }
 
     /// Fast path: record a statement with **one** operand and return its
@@ -511,11 +612,25 @@ impl<T: TapeStorage> Tape<T> {
             }
 
             for op in &self.operations[op_start..op_end] {
-                let mult = op.multiplier;
-                let base = op.slot as usize * n_dir;
+                let raw = op.slot;
+                let base = (raw & Self::SLOT_MASK) as usize * n_dir;
                 let target = &mut below[base..base + n_dir];
-                for d in 0..n_dir {
-                    target[d] += mult * adj[d];
+                if raw & Self::UNIT != 0 {
+                    // Unit operand: `±adj`, bit-identical to `(±1)·adj`.
+                    if raw & Self::NEG != 0 {
+                        for d in 0..n_dir {
+                            target[d] -= adj[d];
+                        }
+                    } else {
+                        for d in 0..n_dir {
+                            target[d] += adj[d];
+                        }
+                    }
+                } else {
+                    let mult = op.multiplier;
+                    for d in 0..n_dir {
+                        target[d] += mult * adj[d];
+                    }
                 }
             }
         }
@@ -538,12 +653,14 @@ impl<T: TapeStorage> Tape<T> {
         //      (index 0 is the sentinel), so for every visited statement
         //      `lhs_slot = i - 1 < statements.len() - 1 == num_variables`.
         //
-        // (I3) Every `Operation.slot` present in `self.operations` is
-        //      strictly less than `num_variables`. The fixed-arity push
-        //      helpers (`push_binary`, `push_unary`) filter `u32::MAX`
-        //      operands *at push time*, so no sentinel ever lands in the
+        // (I3) Every `Operation.slot`, once masked with `SLOT_MASK`, is
+        //      strictly less than `num_variables`. The push helpers filter
+        //      `u32::MAX` operands *at push time* on the raw slot (before
+        //      any unit flag is OR-ed in), so no sentinel ever lands in the
         //      operations buffer — this is why the legacy
-        //      `if op.slot != u32::MAX` check is absent below.
+        //      `if op.slot != u32::MAX` check is absent below. The two high
+        //      bits are the unit-operand flags (see the module docs); the
+        //      slot number itself is below `MAX_VARIABLES = 2^30`.
         //
         // (I4) The sweep loop's `while i > target_pos + 1` condition means
         //      we never visit `i == 0` (the sentinel), so `i - 1` is always
@@ -551,7 +668,7 @@ impl<T: TapeStorage> Tape<T> {
         //
         // (I5) An operand's statement was recorded before the statement that
         //      consumes it, so a statement's LHS slot is strictly greater
-        //      than any of its operand slots. `op.slot == lhs_slot` is
+        //      than any of its (masked) operand slots. `slot == lhs_slot` is
         //      therefore impossible and there is no write-read aliasing
         //      hazard on `derivatives` inside the inner loop.
         //
@@ -605,14 +722,28 @@ impl<T: TapeStorage> Tape<T> {
                 // `ops` because every previously pushed statement's `op_end`
                 // was `self.operations.len()` at push time, which is
                 // monotonically non-decreasing.
-                let op = unsafe { *ops.get_unchecked(j) };
+                let op = unsafe { ops.get_unchecked(j) };
+                let raw = op.slot;
 
-                // SAFETY (I1, I3, I5): `op.slot < num_variables <= derivs.len()`,
-                // and `op.slot != lhs_slot` so there is no aliasing with the
-                // prior `derivs[lhs_slot]` read above.
-                unsafe {
-                    *derivs.get_unchecked_mut(op.slot as usize) +=
-                        op.multiplier * adjoint;
+                // SAFETY (I1, I3, I5): the masked slot is `< num_variables <=
+                // derivs.len()`, and differs from `lhs_slot`, so there is no
+                // aliasing with the prior `derivs[lhs_slot]` read above.
+                let d = unsafe { derivs.get_unchecked_mut((raw & Self::SLOT_MASK) as usize) };
+                // NOTE(perf): the slot word is read first and the multiplier
+                // only on the non-unit branch. For a unit operand `d ± adj`
+                // is bit-identical to `d + (±1)·adj` and takes the multiplier
+                // load and the `fmul` off the store→load chain the sweep is
+                // latency-bound on — measured −15% on the swap's warm reverse
+                // pass and −29% on a 2000-op `acc·x + c` chain (Apple
+                // M-series, rustc 1.92, fat LTO).
+                if raw & Self::UNIT != 0 {
+                    if raw & Self::NEG != 0 {
+                        *d -= adjoint;
+                    } else {
+                        *d += adjoint;
+                    }
+                } else {
+                    *d += op.multiplier * adjoint;
                 }
             }
         }

@@ -50,7 +50,10 @@
 //! # xad_rs::Tape::<f64>::deactivate_all();
 //! ```
 
-use crate::reverse::areal::{record_binary_op, record_nary_op_bounded, record_unary_op, AReal};
+use crate::reverse::areal::{
+    record_binary_op, record_nary_op_bounded, record_nary_unit_op_bounded, record_unary_op,
+    record_unary_unit_op, AReal,
+};
 use crate::forward::jet1::Jet1;
 use crate::forward::jetk::JetK;
 use crate::passive::Passive;
@@ -175,15 +178,15 @@ pub mod ad {
 
     /// `max(a, b)` with correct adjoint propagation.
     ///
-    /// Records a **unary** op on the live branch only — recording a binary
-    /// op with a zero multiplier on the inactive branch would waste one tape
-    /// slot and one multiply on every reverse sweep.
+    /// Records a **unary** unit op on the live branch only — recording a
+    /// binary op with a zero multiplier on the inactive branch would waste
+    /// one tape slot and one multiply on every reverse sweep.
     #[inline]
     pub fn max<T: TapeStorage>(a: &AReal<T>, b: &AReal<T>) -> AReal<T> {
         if a.value() >= b.value() {
-            record_unary_op(a.value(), a.slot(), T::one())
+            record_unary_unit_op(a.value(), a.slot(), false)
         } else {
-            record_unary_op(b.value(), b.slot(), T::one())
+            record_unary_unit_op(b.value(), b.slot(), false)
         }
     }
 
@@ -192,9 +195,9 @@ pub mod ad {
     #[inline]
     pub fn min<T: TapeStorage>(a: &AReal<T>, b: &AReal<T>) -> AReal<T> {
         if a.value() <= b.value() {
-            record_unary_op(a.value(), a.slot(), T::one())
+            record_unary_unit_op(a.value(), a.slot(), false)
         } else {
-            record_unary_op(b.value(), b.slot(), T::one())
+            record_unary_unit_op(b.value(), b.slot(), false)
         }
     }
 
@@ -222,7 +225,8 @@ pub mod ad {
         if xs.is_empty() {
             return AReal::new(value);
         }
-        record_nary_op_bounded(value, xs.len(), xs.iter().map(|x| (T::one(), x.slot())))
+        // Every operand is `+1`: recorded as unit operands (see `crate::tape`).
+        record_nary_unit_op_bounded(value, xs.len(), xs.iter().map(|x| (x.slot(), false)))
     }
 
     /// Fused dot product `Σᵢ xs[i]·ys[i]`, recorded as a **single** tape

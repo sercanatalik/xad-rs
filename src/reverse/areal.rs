@@ -231,6 +231,71 @@ fn record_unary<T: TapeStorage>(result_value: T, input_slot: u32, multiplier: T)
     }
 }
 
+// Unit-operand counterparts: the multiplier is `+1` (`neg == false`) or `−1`
+// (`neg == true`) and is encoded in the slot word rather than stored (see the
+// "Unit operands" section of `crate::tape`). Same passive short-cuts as the
+// multiplied helpers.
+#[inline]
+fn record_unary_unit<T: TapeStorage>(result_value: T, input_slot: u32, neg: bool) -> AReal<T> {
+    if input_slot == INVALID_SLOT {
+        return AReal::new(result_value);
+    }
+    if let Some(ptr) = Tape::<T>::get_active() {
+        // SAFETY: see `record_binary`.
+        let tape = unsafe { &mut *ptr };
+        let slot = tape.push_unary_unit(input_slot, neg);
+        AReal { value: result_value, slot }
+    } else {
+        AReal::new(result_value)
+    }
+}
+
+#[inline]
+fn record_binary_unit<T: TapeStorage>(
+    result_value: T,
+    lhs_slot: u32,
+    lhs_neg: bool,
+    rhs_slot: u32,
+    rhs_neg: bool,
+) -> AReal<T> {
+    if lhs_slot == INVALID_SLOT && rhs_slot == INVALID_SLOT {
+        return AReal::new(result_value);
+    }
+    if let Some(ptr) = Tape::<T>::get_active() {
+        // SAFETY: see `record_binary`.
+        let tape = unsafe { &mut *ptr };
+        let slot = tape.push_binary_unit(lhs_slot, lhs_neg, rhs_slot, rhs_neg);
+        AReal { value: result_value, slot }
+    } else {
+        AReal::new(result_value)
+    }
+}
+
+pub(crate) fn record_unary_unit_op<T: TapeStorage>(
+    result_value: T,
+    input_slot: u32,
+    neg: bool,
+) -> AReal<T> {
+    record_unary_unit(result_value, input_slot, neg)
+}
+
+// Unit-operand n-ary statement (the fused `sum`): every operand is `±1`.
+pub(crate) fn record_nary_unit_op_bounded<T: TapeStorage>(
+    result_value: T,
+    n_max: usize,
+    operands: impl IntoIterator<Item = (u32, bool)>,
+) -> AReal<T> {
+    if let Some(ptr) = Tape::<T>::get_active() {
+        // SAFETY: see `record_binary`.
+        let tape = unsafe { &mut *ptr };
+        tape.push_operands_unit_bounded(n_max, operands);
+        let slot = tape.end_statement();
+        AReal { value: result_value, slot }
+    } else {
+        AReal::new(result_value)
+    }
+}
+
 pub(crate) fn record_unary_op<T: TapeStorage>(
     result_value: T,
     input_slot: u32,
@@ -398,10 +463,10 @@ macro_rules! impl_scalar_lhs_areal_binop {
 
 // AReal op AReal
 impl_areal_binop!(Add, add, (a, b, a_s, b_s) => {
-    record_binary(a + b, a_s, T::one(), b_s, T::one())
+    record_binary_unit(a + b, a_s, false, b_s, false)
 });
 impl_areal_binop!(Sub, sub, (a, b, a_s, b_s) => {
-    record_binary(a - b, a_s, T::one(), b_s, -T::one())
+    record_binary_unit(a - b, a_s, false, b_s, true)
 });
 impl_areal_binop!(Mul, mul, (a, b, a_s, b_s) => {
     // d(a*b) = b*da + a*db
@@ -421,10 +486,10 @@ impl_areal_binop!(Div, div, (a, b, a_s, b_s) => {
 
 // AReal op T (scalar on RHS)
 impl_areal_binop_scalar_rhs!(Add, add, (a, r, a_s) => {
-    record_unary(a + r, a_s, T::one())
+    record_unary_unit(a + r, a_s, false)
 });
 impl_areal_binop_scalar_rhs!(Sub, sub, (a, r, a_s) => {
-    record_unary(a - r, a_s, T::one())
+    record_unary_unit(a - r, a_s, false)
 });
 impl_areal_binop_scalar_rhs!(Mul, mul, (a, r, a_s) => {
     record_unary(a * r, a_s, r)
@@ -437,10 +502,10 @@ impl_areal_binop_scalar_rhs!(Div, div, (a, r, a_s) => {
 
 // scalar op AReal (the orphan rule forces a concrete scalar type)
 impl_scalar_lhs_areal_binop!(Add, add, (l, r, r_s) => {
-    record_unary(l + r, r_s, 1.0)
+    record_unary_unit(l + r, r_s, false)
 });
 impl_scalar_lhs_areal_binop!(Sub, sub, (l, r, r_s) => {
-    record_unary(l - r, r_s, -1.0)
+    record_unary_unit(l - r, r_s, true)
 });
 impl_scalar_lhs_areal_binop!(Mul, mul, (l, r, r_s) => {
     record_unary(l * r, r_s, l)
@@ -457,7 +522,7 @@ impl<T: TapeStorage> Neg for AReal<T> {
     type Output = AReal<T>;
     #[inline]
     fn neg(self) -> AReal<T> {
-        record_unary(-self.value, self.slot, -T::one())
+        record_unary_unit(-self.value, self.slot, true)
     }
 }
 
@@ -465,7 +530,7 @@ impl<T: TapeStorage> Neg for &AReal<T> {
     type Output = AReal<T>;
     #[inline]
     fn neg(self) -> AReal<T> {
-        record_unary(-self.value, self.slot, -T::one())
+        record_unary_unit(-self.value, self.slot, true)
     }
 }
 
