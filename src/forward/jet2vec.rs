@@ -72,18 +72,20 @@
 //! which is a rank-1 outer-product update plus a scaled `hess` copy,
 //! evaluated on the upper triangle only.
 //!
-//! ## When to use `Jet2Vec` vs seeded `Jet2<T>`
+//! ## When to use `Jet2Vec`
 //!
-//! `Jet2Vec` and seeded `Jet2<T>` are complementary, not competitors. The
-//! **crossover** between them is around `n ≈ 50–100`:
+//! `Jet2Vec` is the route that needs no tape and returns value, gradient,
+//! and Hessian from a **single** evaluation. It is not the fastest full
+//! Hessian: `examples/hessian.rs` measures the K-lane forward-over-adjoint
+//! engine (`compute_hessian_k`) ahead of it at `n = 4` and at `n = 12`, and
+//! the `O(n²)` per-operation cost only widens the gap from there.
 //!
-//! | Situation                                       | Prefer              |
-//! |--------------------------------------------------|---------------------|
-//! | Full `n × n` Hessian, `n ≲ 50`                   | `Jet2Vec`          |
-//! | Own-gamma (Hessian diagonal) only                | seeded `Jet2<T>`   |
-//! | Single-direction second derivative               | seeded `Jet2<T>`   |
-//! | Full Hessian, `n ≳ 100`                          | seeded `Jet2<T>` × n passes |
-//! | Between `n ≈ 50` and `n ≈ 100`                   | benchmark both — depends on op mix |
+//! | Situation                                         | Prefer                          |
+//! |---------------------------------------------------|---------------------------------|
+//! | Full `n × n` Hessian, fastest                      | `compute_hessian_k::<K>`, K 4–8 |
+//! | Value + gradient + Hessian from one evaluation, no tape | `Jet2Vec` via `compute_full_hessian` |
+//! | Body cannot be written against `AReal`            | `Jet2Vec`                       |
+//! | Own-gamma (Hessian diagonal) or one direction      | seeded `Jet2<T>`                |
 //!
 //! ## `Div` is a direct closed form — NOT `Mul ∘ Recip`
 //!

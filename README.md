@@ -39,8 +39,8 @@ Requires Rust 1.85 or newer (edition 2024).
 | Full gradient, `n ≲ 16` inputs, no tape | `compute_gradient_fwd_k::<K, _>` — `⌈n/K⌉` passes of `JetK<f64, K>` | [02 — Forward mode & dual numbers](docs/theory/02-forward-mode-and-dual-numbers.md) |
 | Full gradient, any number of inputs, scalar output | `compute_gradient_rev`, or `Tape` + `AReal<T>` by hand | [03 — Reverse mode & taped adjoints](docs/theory/03-reverse-mode-and-taped-adjoints.md) |
 | Gamma / diagonal Hessian along one direction | `Jet2<T>` | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
-| Full n × n Hessian, n ≲ 50 | `Jet2Vec` via `compute_full_hessian` | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
-| Full n × n Hessian, larger n | `compute_hessian_k::<K, _>` — nested `Tape<JetK<f64, K>>` | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
+| Full n × n Hessian | `compute_hessian_k::<K, _>` — `⌈n/K⌉` passes of `Tape<JetK<f64, K>>`; faster than the dense forward pass at every n measured (`examples/hessian.rs`) | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
+| Value, gradient and Hessian from one evaluation, no tape | `Jet2Vec` via `compute_full_hessian` — `O(n²)` per operation | [04 — Second-order & k-jets](docs/theory/04-second-order-and-k-jets.md) |
 
 Against one forward pass per input, reverse mode breaks even around n ≈ 4, and
 the crate's own examples show it: at n = 1 `Jet1` is 17× faster than a tape pass

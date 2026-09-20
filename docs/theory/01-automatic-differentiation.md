@@ -115,7 +115,7 @@ chapters 02–03.
 
 | Method | Idea | Error | Cost in n, m | Notes |
 |---|---|---|---|---|
-| **Numerical (bumping)** | Approximate `∂F/∂x_j ≈ (F(x + h e_j) − F(x)) / h` | Yes — truncation + cancellation | `n + 1` forward passes (forward diff) or `2n` (central diff) | Cheap to implement, fragile near singularities, step-size tuning is delicate (chapter 07 quantifies the trade-off) |
+| **Numerical (bumping)** | Approximate `∂F/∂x_j ≈ (F(x + h e_j) − F(x)) / h` | Yes — truncation + cancellation | `n + 1` forward passes (forward diff) or `2n` (central diff) | Cheap to implement, fragile near singularities, step-size tuning is delicate (chapter 06 quantifies the trade-off) |
 | **Symbolic** | Construct a closed-form expression for `∂F/∂x_j`, then evaluate | None *in principle*; in practice subject to numerical evaluation error | Can explode (expression swell) | Useful for hand-derived greeks; impractical for long programs |
 | **Automatic** | Augment each elementary op with its local derivative; chain rule does the rest | None (machine precision) | One pass + bookkeeping; either `O(n)` (forward) or `O(m)` (reverse) | The subject of this library |
 
@@ -125,7 +125,7 @@ operations as the program runs, so the only floating-point error in the
 output of AD is the same kind of round-off you'd see in the primal
 computation — never the `O(h)` truncation error of finite differences,
 and never the catastrophic cancellation of small `h`. A formal error
-analysis appears in chapter 07.
+analysis appears in chapter 06.
 
 ### Exactness, stated precisely
 

@@ -267,6 +267,11 @@ pub struct DenseHessian {
 /// Inputs are positional (`&[f64]`); read the gradient as `gradient[i]` and the
 /// Hessian as `hessian[[i, j]]`. Apply human-readable names at the call site if
 /// you need them.
+///
+/// This is the route that needs no tape and returns value, gradient, and
+/// Hessian from one evaluation. For the Hessian alone,
+/// [`compute_hessian_k`] is faster at every size `examples/hessian.rs`
+/// measures (the dense pass is `O(n²)` per operation).
 pub fn compute_full_hessian<F>(inputs: &[f64], f: F) -> DenseHessian
 where
     F: Fn(&[Jet2Vec]) -> Jet2Vec,

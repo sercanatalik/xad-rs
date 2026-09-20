@@ -28,12 +28,15 @@ Some computations need second-order information. The two big use cases:
   type. Carries `(value, grad ∈ R^n, hess ∈ R^{n×n})`: value, full
   gradient, and full Hessian. One forward pass for everything.
 
-Both are exact (no finite differences). The composite helpers
+Both are exact (no finite differences), and so are the three composite
+helpers:
 [`compute_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian.html)
-(reverse-mode with finite-difference perturbation of the gradient,
-approximate) and
+and
+[`compute_hessian_k`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian_k.html)
+(forward-over-adjoint on a tape whose storage scalar is a forward dual,
+`n` and `⌈n/K⌉` passes respectively) and
 [`compute_full_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_full_hessian.html)
-(`Jet2Vec` based, exact) wrap these.
+(one `Jet2Vec` pass).
 
 ## Theory
 
@@ -201,7 +204,7 @@ structurally symmetric. This means the cost-per-op is `O(n(n+1)/2)`,
 not `O(n²)`, modulo the mirror.
 
 Round-off can still break symmetry numerically when the Hessian is
-ill-conditioned; chapter 07 quantifies this. The `Jet2Vec` impl
+ill-conditioned; chapter 06 quantifies this. The `Jet2Vec` impl
 sidesteps it by computing only the upper triangle and mirroring, so
 symmetry holds at the *storage* level even when it would not hold to
 last-bit precision under naive evaluation.
@@ -234,13 +237,11 @@ tangent propagation through the reverse sweep, so `O(P)` per HVP.
 
 This is the standard reverse-over-forward construction that mainstream
 reverse-mode AD frameworks use for their `vhp` / `hvp` operators.
-`xad-rs` does not currently expose a built-in HVP helper, but the
-ingredients exist:
-the reverse-mode pipeline reads tangent values out of `AReal`-on-`Jet1`
-when the right type plumbing is wired up. For the common case
-`n ≲ 50`, `Jet2Vec` via `compute_full_hessian` is fast enough; for
-larger `n` consider rolling HVP by hand or switching to a library with
-native HVP support.
+`xad-rs` exposes exactly this construction as its Hessian engine:
+`compute_hessian` records on `Tape<Jet1<f64>>` — a reverse tape whose
+storage scalar is a forward dual — and each pass is one HVP along a
+seeded input direction; `compute_hessian_k` seeds `K` directions at
+once on `Tape<JetK<f64, K>>`, so a full Hessian is `⌈n/K⌉` passes.
 
 ### Edge pushing for sparse Hessians
 
@@ -256,27 +257,37 @@ elementary `φ_k` of arity `r` adds at most `O(r²)` new edges to the
 Hessian graph; for typical `r = 2` this is constant per-step.
 
 Edge pushing was introduced by Gower & Mello (2012); the algorithm is
-implemented in specialised graph-coloring AD tooling. `xad-rs` does not currently expose
-edge pushing; the `Jet2Vec` dense impl is the default. If your problem
-has structurally sparse Hessian and `n > 100`, the right move is to
-either roll a hand-written symbolic Hessian or compute Hessian-vector
-products on demand via forward-over-reverse.
+implemented in specialised graph-coloring AD tooling. `xad-rs` does not
+currently expose edge pushing; its Hessians are dense. If your problem
+has a structurally sparse Hessian and `n > 100`, the right move is to
+either roll a hand-written symbolic Hessian or compute only the
+Hessian-vector products you need with `compute_hessian` seeded one
+direction at a time.
 
-### Two `compute_hessian` helpers, two different things
+### Three exact routes to a full Hessian, measured
 
-The `ops` module exposes two functions that look superficially similar:
+The `ops` module exposes three functions that all return the exact
+`n × n` Hessian:
 
-- [`compute_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian.html) — repeated reverse-mode passes with
-  **finite-difference perturbation** of the gradient. Approximate
-  (`O(1e-7)` accuracy, see chapter 07), `O(n)` reverse-mode passes,
-  no `Jet2Vec` required. Useful when you need a Hessian and don't have
-  or don't want the extra dependency on second-order forward.
+- [`compute_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian.html) — `n` forward-over-adjoint passes on
+  `Tape<Jet1<f64>>`, one Hessian column per pass. Exact.
+- [`compute_hessian_k`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian_k.html) — the same engine with `K` tangent
+  lanes per pass on `Tape<JetK<f64, K>>`, so `⌈n/K⌉` passes; bit-identical
+  to `compute_hessian`. `compute_hessian_k_par` distributes the blocks.
 - [`compute_full_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_full_hessian.html) — a single `Jet2Vec` forward pass.
-  Exact (machine precision), one pass, but `O(n²)` per-op cost. The
-  right choice for `n ≲ 50` when you want exactness.
+  Exact, one evaluation, no tape, and it returns value, gradient, and
+  Hessian together — but `O(n²)` per operation.
 
-Pick `compute_full_hessian` by default; fall back to `compute_hessian`
-only if you cannot use `Jet2Vec` for some reason.
+`examples/hessian.rs` times all three on the same bodies and asserts
+they agree to `1e-12`. The cost model below predicts `Jet2Vec` wins for
+small `n`; the constants say otherwise. On Apple M-series (fat LTO,
+medians of five runs), at `n = 4` the `K = 4` engine takes 209 ns against
+573 ns for the `Jet2Vec` pass, and at `n = 12` the `K = 8` engine takes
+1.34 µs against 3.97 µs — 0.36× and 0.34×; even the `n`-pass `Jet1`
+engine matches `Jet2Vec` at `n = 12`. Pick `compute_hessian_k::<K>`
+with `K` in 4–8 by default; pick `compute_full_hessian` when you want
+value, gradient, and Hessian from one evaluation with no tape, or when
+the body cannot be written against `AReal`.
 
 ## Cost model
 
@@ -286,15 +297,16 @@ Let `P` be the flop count of the primal, `n` the input dimension.
 |---|---|---|---|
 | `Jet2<T>` single direction | `~3P` | 3 `T`s | one diagonal Hessian entry + one gradient entry along the seeded direction |
 | `Jet2Vec<T>` full Hessian | `~(1 + n + n²) P` | one `T` + length-`n` gradient + `n × n` Hessian | value + full gradient + full Hessian |
-| `compute_hessian` (FD over reverse) | `~5P · n` (one reverse sweep per direction, plus base) | `O(P)` tape | full Hessian, approximate |
+| `compute_hessian` (forward-over-adjoint, `n` passes) | `~7P · n` | `O(P)` tape of duals | full Hessian, exact |
+| `compute_hessian_k::<K>` (`⌈n/K⌉` passes) | `~(1 + c·K) P · ⌈n/K⌉`, `c` small: lanes vectorise | `O(P)` tape of K-jets | full Hessian, exact, bit-identical to the above |
 | `compute_full_hessian` (one `Jet2Vec` pass) | `~(1 + n + n²) P` | as above | value + gradient + exact Hessian |
-| Forward-over-reverse HVP | `~7P` per direction | `O(P)` tape | one column of `H v` per call, exact |
 
-For `n ≲ 50` the `O(n²)` per-op cost of `Jet2Vec` is dominated by other
-constants and the convenience of one-pass exactness wins. Above
-`n ≈ 100` the picture flips and you either want per-column seeded
-`Jet2` passes, hand-rolled HVP, or (if the Hessian is sparse) edge
-pushing.
+The table's asymptotics favour `Jet2Vec` for small `n`, but its
+per-operation constant — two heap allocations and a walk over
+`n(n+1)/2` cells — is large next to a tape record plus one vectorised
+sweep step, and `examples/hessian.rs` measures the K-lane engine faster
+at `n = 4` already. Reach for `Jet2Vec` for what only it offers: one
+evaluation, no tape, value and gradient and Hessian together.
 
 ## Anchored API
 
@@ -307,7 +319,7 @@ pushing.
 - [`xad_rs::Jet2Vec`](https://docs.rs/xad-rs/latest/xad_rs/forward/jet2vec/struct.Jet2Vec.html).
   - `Jet2Vec::variable(value, i, n)`, `Jet2Vec::constant(value, n)`,
     `Jet2Vec::value()`, `Jet2Vec::gradient()`, `Jet2Vec::hessian()`.
-- [`xad_rs::compute_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian.html) — finite-difference over reverse-mode (approximate).
+- [`xad_rs::compute_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian.html) — `n` forward-over-adjoint passes (exact); [`xad_rs::compute_hessian_k`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_hessian_k.html) — `⌈n/K⌉` passes, bit-identical.
 - [`xad_rs::compute_full_hessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/fn.compute_full_hessian.html) — `Jet2Vec` based (exact). Returns a [`DenseHessian`](https://docs.rs/xad-rs/latest/xad_rs/ops/hessian/struct.DenseHessian.html).
 
 ## Worked example
@@ -381,13 +393,12 @@ want them.
   them in the middle of a tree of expressions and re-wrapping into a
   new `Jet2Vec::constant` discards all the propagated curvature.
 - **Building Hessians by finite-differencing first-order AD.** It
-  works (`compute_hessian` does this) but you pay for `n` reverse
-  sweeps and you eat the `O(1e-7)` floor of the finite-difference step.
-  Prefer `compute_full_hessian` when `n` is small enough.
+  works and is exact (`compute_hessian` does this), but `compute_hessian_k`
+  gets the same numbers in `⌈n/K⌉` sweeps.
 - **Forgetting that `Jet2Vec` storage is `O(n²)`.** For `n = 100`,
   each live `Jet2Vec` carries `~10^4` floats just for the Hessian —
   `~80 KB`. A program with a thousand intermediate values needs `~80
-  MB`. Past `n ≈ 50–100`, switch to per-direction passes or HVP.
+  MB`. The K-lane engine's memory is the tape, `O(P)`, whatever `n` is.
 - **Assuming higher-order = better.** Going past `k = 2` is rare in
   practice. Faà di Bruno's Bell-number cost growth makes
   `k = 3, 4, …` expensive per op, and storage of order-`k` tensors

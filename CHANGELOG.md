@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — the full-Hessian guidance is measured, and it pointed the wrong way
+
+README, `docs/theory/04`, the `Jet2Vec` module docs, and `examples/hessian.rs`
+all said to prefer `Jet2Vec` (`compute_full_hessian`) for a full Hessian below
+`n ≈ 50`. `examples/hessian.rs` now times every exact route on a 4-input and a
+12-input body, asserts they agree to `1e-12`, and prints the table the guidance
+is written from — the second-order counterpart of `jetk_gradient.rs`. The
+guidance is rewritten: `compute_hessian_k::<K>` with `K` in 4–8 is the default
+full-Hessian route at every `n`; `Jet2Vec` is the route that needs no tape and
+returns value, gradient, and Hessian from one evaluation.
+
+`docs/theory/04` also described `compute_hessian` as a finite-difference method
+with `O(1e-7)` accuracy and cited a chapter 07 that does not exist; it has been
+exact forward-over-adjoint since the nested engine landed, and the chapter is
+06. Both corrected, along with the cost-model table and the pitfalls.
+
+No code changed in `src/` beyond rustdoc.
+
+### Measured — the routes
+
+Apple M-series, rustc 1.92.0, fat LTO, `examples/hessian.rs`, medians of five
+runs (`openspec/changes/archive/2026-09-20-hessian-route-guidance-measured/bench/`).
+
+| route | n = 4 | n = 12 |
+|---|---|---|
+| `compute_full_hessian` (`Jet2Vec`, one pass) | 573 ns | 3.97 µs |
+| `compute_hessian` (`Jet1` engine, `n` passes) | 425 ns | 4.17 µs |
+| `compute_hessian_k::<4>` | **209 ns** | 1.43 µs |
+| `compute_hessian_k::<8>` | 328 ns | **1.34 µs** |
+
 ### Fixed — `pow` with a derivative-free exponent no longer evaluates `ln(base)`
 
 `Real::powf(&self, R::from(k))` is how a generic body raises to a passive
