@@ -25,6 +25,7 @@
 //! [`Jet2Vec`](crate::forward::jet2vec::Jet2Vec).
 
 use crate::passive::Passive;
+use num_traits::Zero;
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -432,6 +433,13 @@ impl crate::real::Real for Jet2<f64> {
     }
     #[inline]
     fn powf(&self, exponent: Self) -> Self {
+        // A derivative-free exponent (the `R::from(k)` spelling) takes the
+        // direct form `k·u^{k−1}` / `k(k−1)·u^{k−2}` — the same form `powi`
+        // and the inherent `powf(T)` use — which stays finite for a negative
+        // base where `ln u` below would be NaN.
+        if exponent.d1.is_zero() && exponent.d2.is_zero() {
+            return Jet2::powf(*self, exponent.value);
+        }
         // Both derivatives come from `exp(v · ln u)`, which propagates first and
         // second order through the existing primitives. The *value* is written
         // back from `powf`, because `exp(v · ln u)` rounds three times where

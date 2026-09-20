@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `pow` with a derivative-free exponent no longer evaluates `ln(base)`
+
+`Real::powf(&self, R::from(k))` is how a generic body raises to a passive
+power. All three first-order `pow` surfaces still evaluated `ln(base)` for the
+exponent partial on every call, and in the forward modes that `ln` poisoned
+the base partial: for a negative or zero base it is NaN and `NaN × 0` stays
+NaN, so `Jet1`, `JetK`, and `Jet2` returned a NaN derivative for `powf(−3, 2)`
+where the value is `9` and the derivative is `−6`. Reverse mode escaped only
+because the inactive operand was dropped at push time.
+
+Now `math::ad::pow`, `math::fwd::pow`, and `math::fwdk::pow` skip the `ln`
+when the exponent carries no derivative, and `Jet2`'s `Real::powf` dispatches
+to the direct form `k·u^{k−1}` / `k(k−1)·u^{k−2}` (the one its `powi` and
+inherent `powf(T)` already use) in that case. Values are untouched.
+Positive-base derivatives are bit-identical for `Jet1`, `JetK`, and reverse
+mode (up to a `−0.0` that becomes `+0.0`); `Jet2`'s move by ulps from the
+composed `exp(v·ln u)` form to the direct one. `tests/pow_passive_exponent.rs`
+pins all of it, including the negative- and zero-base cases in every mode.
+
+### Measured — before and after
+
+Apple M-series, rustc 1.92.0, fat LTO; interleaved A/B of HEAD and changed
+binaries, five rounds, medians
+(`openspec/changes/archive/2026-09-20-pow-passive-exponent/bench/`). Noise
+controls within 3%.
+
+- `jetk_gradient` 30-tenor swap (`(r + 1).powf(R::from(m))` per tenor):
+  `Jet1 × 30` **11.1 → 9.2 µs**, `JetK<4>` 3.19 → 2.82 µs, `JetK<8>`
+  **1.34 → 1.12 µs**, `JetK<16>` 849 → 748 ns, reverse warm 924 → 867 ns.
+- A first form with a separate fast-path lane loop in `fwdk::pow` regressed
+  `JetK<16>` by 12% (spills); the shipped single-loop form is recorded as a
+  `NOTE(perf)` at the site.
+
 ### Added — the Hessian drivers on a tape the caller owns
 
 `compute_hessian_with(tape, inputs, f)` and

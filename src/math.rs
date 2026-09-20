@@ -141,12 +141,19 @@ pub mod ad {
         record_binary_op(result, y.slot(), xv / denom, x.slot(), -yv / denom)
     }
 
+    /// `base^exponent` with both operands active. When the exponent is
+    /// unrecorded (the `Real::powf(&self, R::from(k))` spelling), `ln(base)`
+    /// is not evaluated: the exponent partial would be dropped at push time
+    /// anyway, and the `ln` is a third of the op's cost.
     #[inline]
     pub fn pow<T: TapeStorage>(base: &AReal<T>, exponent: &AReal<T>) -> AReal<T> {
         let bv = base.value();
         let ev = exponent.value();
         let result = bv.powf(ev);
         let d_base = pow_d_base(bv, ev, result);
+        if !exponent.should_record() {
+            return record_unary_op(result, base.slot(), d_base);
+        }
         let d_exp = result * bv.ln();
         record_binary_op(result, base.slot(), d_base, exponent.slot(), d_exp)
     }
@@ -325,12 +332,19 @@ pub mod fwd {
         Jet1::new(result, deriv)
     }
 
+    /// `base^exponent` with both operands active. A derivative-free exponent
+    /// skips `ln(base)` and yields `d_base · base'` alone — not
+    /// `d_base · base' + (result · ln base) · 0`, whose `ln` is NaN for a
+    /// negative or zero base and would poison a finite base partial.
     #[inline]
     pub fn pow<T: Passive>(base: &Jet1<T>, exponent: &Jet1<T>) -> Jet1<T> {
         let bv = base.value();
         let ev = exponent.value();
         let result = bv.powf(ev);
         let d_base = pow_d_base(bv, ev, result);
+        if exponent.derivative().is_zero() {
+            return Jet1::new(result, d_base * base.derivative());
+        }
         let d_exp = result * bv.ln();
         Jet1::new(result, d_base * base.derivative() + d_exp * exponent.derivative())
     }
@@ -392,13 +406,21 @@ pub mod fwdk {
         y.chain2(*x, result, xv / denom, -yv / denom)
     }
 
+    /// `base^exponent` with both operands active; a derivative-free exponent
+    /// (all lanes zero) skips `ln(base)` — see [`fwd::pow`].
     #[inline]
     pub fn pow<T: Passive, const K: usize>(base: &JetK<T, K>, exponent: &JetK<T, K>) -> JetK<T, K> {
         let bv = base.value;
         let ev = exponent.value;
         let result = bv.powf(ev);
         let d_base = pow_d_base(bv, ev, result);
-        let d_exp = result * bv.ln();
+        // NOTE(perf): one `chain2` loop with the exponent partial selected,
+        // not a separate `chain` fast path: at K = 16 the two-loop form spilt
+        // and measured +12% on a 30-`pow` body. With `d_exp = 0` the lane
+        // update is `tₐ·d_base + 0·0`, finite for any base since no `ln` ran.
+        // The fold (not `all`) keeps the K-lane zero test branch-free.
+        let exp_passive = exponent.tangents.iter().fold(true, |acc, t| acc & t.is_zero());
+        let d_exp = if exp_passive { T::zero() } else { result * bv.ln() };
         base.chain2(*exponent, result, d_base, d_exp)
     }
 
