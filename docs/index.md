@@ -41,8 +41,8 @@
       <circle cx="116" cy="214" r="4" fill="#FFFFFF" stroke="#1F4FD8" stroke-width="2"></circle>
       <text x="124" y="206" fill="#1F4FD8">n ≈ 4</text>
       <text x="300" y="24" fill="#101820">Jet1 × n</text>
-      <text x="452" y="116" fill="#4A5563">JetK&lt;8&gt;, ⌈n/8⌉ passes</text>
-      <text x="452" y="238" fill="#1F4FD8">one reverse sweep</text>
+      <text x="536" y="116" fill="#4A5563" text-anchor="end">JetK&lt;8&gt;, ⌈n/8⌉ passes</text>
+      <text x="536" y="238" fill="#1F4FD8" text-anchor="end">one reverse sweep</text>
     </svg>
     <figcaption><b>Fig. 1</b> Cost of a full gradient against the number of inputs, schematic. Forward mode pays one pass per input, K lanes per pass move the crossover out, reverse mode pays one sweep. Measured values are in <code>examples/jetk_gradient.rs</code>.</figcaption>
   </figure>
