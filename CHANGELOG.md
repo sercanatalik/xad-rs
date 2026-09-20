@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [8.1.0] - 2026-09-20
+
+### Changed — version only
+
+No functional change from 8.0.1: same API, same behaviour, same numbers. The
+crate is released under a minor version rather than a patch, and the README
+install snippet moves to `xad-rs = "8.1"` with it. 8.0.1 remains on crates.io
+and remains correct; callers on `8.0` need not move.
+
 ## [8.0.1] - 2026-09-20
 
 ### Changed — docs.rs is the only published documentation
