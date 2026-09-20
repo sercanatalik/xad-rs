@@ -305,6 +305,9 @@ html.xad-landing .nav-wrapper, html.xad-landing .xad-edit, html.xad-landing .xad
 .xl-examples a code { font-size: 13px; background: transparent; padding: 0; color: var(--xad-accent); }
 .xl-examples a span { color: var(--xad-muted); }
 .xl-examples a:hover span { color: var(--xad-ink); }
+.xl-ack { max-width: 1060px; }
+.xl-ack dd { line-height: 1.55; }
+.xl-ack-more { margin: 16px 0 0; font-size: 15px; font-weight: 500; }
 .xl-table { max-width: 1060px; background: #FFFFFF; padding: 0 20px; border-top: 2px solid var(--xad-ink); border-bottom: 2px solid var(--xad-ink); }
 .xl-table .xl-row { display: grid; grid-template-columns: 1.4fr 1.3fr 0.6fr; gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--xad-tint); font-size: 15px; align-items: center; }
 .xl-table .xl-row:last-child { border-bottom: 0; }

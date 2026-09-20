@@ -10,3 +10,7 @@
 4. [Second order and k-jets](theory/04-second-order-and-k-jets.md)
 5. [Implementation tradeoffs](theory/05-implementation-tradeoffs.md)
 6. [Numerical analysis of AD](theory/06-numerical-analysis-of-ad.md)
+
+---
+
+[Acknowledgements](acknowledgements.md)

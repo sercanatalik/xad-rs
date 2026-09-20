@@ -119,4 +119,18 @@
   <div class="xl-caption"><b>Table 2</b> Measured levers. Rejected after measurement: a struct-of-arrays tape layout (regresses small cache-resident tapes 12–16%) and expression-template fusion (no isolated bottleneck).</div>
 </section>
 
+<section class="xl-section" id="acknowledgements">
+  <div class="xl-head">
+    <span class="xl-num">§ 5</span>
+    <h2 class="xl-h">Acknowledgements</h2>
+    <p>The architecture this library reimplements, the papers its chapters argue from, and the crates it is built on.</p>
+  </div>
+  <dl class="xl-facts xl-ack">
+    <div><dt>Architecture</dt><dd>An independent Rust implementation of the design popularised by the C++ <a href="https://github.com/auto-differentiation/xad">XAD</a> library, by the auto-differentiation team. Not affiliated with the upstream project.</dd></div>
+    <div><dt>Literature</dt><dd>Griewank and Walther on the discipline, Wengert on the evaluation trace, Baur and Strassen on the cheap gradient, Pearlmutter on Hessian-vector products, Naumann, Higham, Hull and Capriotti.</dd></div>
+    <div><dt>Built on</dt><dd><code>num-traits</code>, <code>ndarray</code> and <code>rayon</code> at run time; <code>approx</code> and <code>paste</code> for tests and examples only.</dd></div>
+  </dl>
+  <p class="xl-ack-more"><a href="acknowledgements.html">Full credits and the bibliography →</a></p>
+</section>
+
 </div>
