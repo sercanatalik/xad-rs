@@ -36,8 +36,10 @@ jobs:
       - name: Build
         run: mdbook build docs
 
-      # `enablement: true` creates the Pages site (source: GitHub Actions) the
-      # first time this runs, so no manual settings step is needed.
+      # The Pages site (source: GitHub Actions) was created once with
+      # `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`;
+      # the workflow token may not create it. `enablement` only re-creates it if
+      # it disappears, and needs a token allowed to.
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
