@@ -32,9 +32,8 @@ Requires Rust 1.85 or newer (edition 2024).
 
 ## Documentation
 
-- **Site** — the theory chapters with rendered mathematics and search: [sercanatalik.github.io/xad-rs](https://sercanatalik.github.io/xad-rs/).
-- **Theory** — the same chapters as Markdown, with decision-tree guidance: [`docs/README.md`](docs/README.md).
 - **API** — generated rustdoc: [docs.rs/xad-rs](https://docs.rs/xad-rs).
+- **Theory** — long-form chapters with decision-tree guidance: [`docs/README.md`](docs/README.md).
 - **Examples** — runnable, cross-checked against analytic answers: [`examples/`](examples/).
 
 
@@ -220,5 +219,8 @@ MIT. See [`LICENSE.md`](LICENSE.md).
 - [QuantLibAAD](https://github.com/auto-differentiation/QuantLibAAD) — the
   XAD-instrumented QuantLib build; reference for the AAD-on-quant-finance
   patterns the financial examples in this crate are modelled after.
-- [`num-traits`](https://crates.io/crates/num-traits) and
-  [`ndarray`](https://crates.io/crates/ndarray) for the underlying primitives.
+- [`num-traits`](https://crates.io/crates/num-traits) — the numeric trait
+  vocabulary `Real` sits beside; [`ndarray`](https://crates.io/crates/ndarray) —
+  the dense storage behind the Jacobian and Hessian drivers;
+  [`rayon`](https://crates.io/crates/rayon) — the work-stealing pool
+  `compute_hessian_k_par` uses. Three at run time, deliberately few.

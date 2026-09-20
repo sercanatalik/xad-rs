@@ -1,13 +1,12 @@
 [package]
 name = "xad-rs"
-version = "8.0.0"
+version = "8.0.1"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Sercan Atalik"]
 description = "Exact automatic differentiation for Rust — forward-mode, reverse-mode, first- and second-order, with a unified `Real` trait for mode-agnostic numerical code"
 license = "MIT"
 repository = "https://github.com/sercanatalik/xad-rs"
-homepage = "https://github.com/sercanatalik/xad-rs"
 documentation = "https://docs.rs/xad-rs"
 readme = "README.md"
 keywords = ["autodiff", "derivatives", "adjoint", "dual-numbers", "quant"]

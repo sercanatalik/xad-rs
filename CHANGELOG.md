@@ -2,14 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [8.0.1] - 2026-09-20
+
+### Changed — docs.rs is the only published documentation
+
+The theory chapters stay in the repository as Markdown under `docs/theory/`,
+read from [`docs/README.md`](docs/README.md), and are unchanged.
+`package.homepage` — a duplicate of `package.repository`, which cargo warns
+about — is dropped from `Cargo.toml`; `package.documentation` was already
+docs.rs and is unchanged.
+
 ## [8.0.0] - 2026-09-20
-
-### Added — documentation site
-
-The theory chapters are published at <https://sercanatalik.github.io/xad-rs/>
-by `.github/workflows/pages.yml`, built with mdBook from `docs/`. The site adds
-a landing page, search, typeset mathematics for the chapters' ```` ```math ````
-blocks, and a per-page contents rail; the chapters themselves are unchanged.
 
 ### Changed — forward-mode weighted aggregates take the scalar-operand spelling
 
