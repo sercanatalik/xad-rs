@@ -619,7 +619,10 @@ impl<const K: usize> crate::real::Real for JetK<f64, K> {
     }
     // Lane loops in slice order — the same operation sequence `Jet1`'s
     // aggregates use, so the value equals the passive scalar's plain loop
-    // bit for bit. Forward mode has no fused encoding to preserve.
+    // bit for bit. Forward mode has no fused encoding to preserve. Weighted
+    // terms take the scalar-operand spelling `x * w` (one lane multiply per
+    // term) rather than lifting `w` to a constant jet (a full binary chain
+    // rule that scales K zero tangents by `x`'s value and adds them).
     #[inline]
     fn sum(xs: &[Self]) -> Self {
         let mut acc = Self::constant(0.0);
@@ -642,7 +645,7 @@ impl<const K: usize> crate::real::Real for JetK<f64, K> {
         assert_eq!(ws.len(), xs.len(), "weighted_sum: slice length mismatch");
         let mut acc = Self::constant(0.0);
         for (&w, x) in ws.iter().zip(xs) {
-            acc += Self::constant(w) * *x;
+            acc += *x * w;
         }
         acc
     }
@@ -652,7 +655,7 @@ impl<const K: usize> crate::real::Real for JetK<f64, K> {
         assert_eq!(xs.len(), ys.len(), "weighted_dot: slice length mismatch");
         let mut acc = Self::constant(0.0);
         for ((&w, x), y) in ws.iter().zip(xs).zip(ys) {
-            acc += Self::constant(w) * *x * *y;
+            acc += *x * w * *y;
         }
         acc
     }

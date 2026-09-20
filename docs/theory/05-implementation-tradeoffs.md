@@ -84,19 +84,27 @@ padding) per intermediate value, on top of the operand list.
 XAD's contribution to the AD-implementation literature is the
 **packed three-buffer layout**, which `xad-rs` adopts verbatim:
 
-- `statements: Vec<Statement>` — one entry per recorded variable
-  (LHS slot). `Statement` is just `{ lhs_slot: u32, op_end: u32 }`:
-  the LHS slot id and the exclusive end of this statement's operand
-  range in the operations buffer. 8 bytes per intermediate.
+- `statements: Vec<u32>` — one entry per recorded variable, holding
+  only that statement's `op_end`, the exclusive end of its operand
+  range in the operations buffer. **Slot numbers are implicit**:
+  statement index `i` *is* slot `i − 1` (index 0 is a sentinel), so a
+  statement is 4 bytes, not the 8 an explicit `{ lhs_slot, op_end }`
+  would take.
 - `operations: Vec<Operation<T>>` — a packed stream of `(multiplier:
-  T, operand_slot: u32)` pairs. A statement's operand range is
-  `[prev_statement.op_end, self.op_end)`, found by binary or implicit
-  scan. For `T = f64` and a 4-byte slot, 12 bytes per operand.
-- `derivatives: Vec<T>` — indexed directly by slot. The reverse
-  sweep writes adjoints here.
+  T, slot: u32)` pairs. A statement's operand range is
+  `[statements[i − 1], statements[i])`, an O(1) lookup. For `T = f64`
+  the pair is 16 bytes, naturally aligned; a 12-byte packed layout and
+  a struct-of-arrays split were both measured slower (the sweep is
+  latency-bound, not bandwidth-bound). The two high bits of `slot` flag
+  a **unit operand** — multiplier exactly `±1`, as every `+`, `−`,
+  negation, `max`/`min`, and fused `sum` records — which the sweep adds
+  or subtracts without loading the multiplier; that leaves `2^30` slot
+  numbers per tape.
+- `derivatives: Vec<T>` — indexed directly by slot. Not touched during
+  recording; materialised in one `resize` at sweep time.
 
-Total memory per binary op: 1 statement (8 B) + 2 operations (24 B) +
-1 derivative slot (8 B) = **40 B**. A non-packed alternative with one
+Total memory per binary op: 1 statement (4 B) + 2 operations (32 B) +
+1 derivative slot (8 B) = **44 B**. A non-packed alternative with one
 `Vec` per node, even with small-vec optimisations, runs 64–96 B per
 binary op.
 
@@ -175,33 +183,27 @@ The constraint that surfaces in user code is the panic on double
 activation: `Tape::activate()` while a tape is already active is a
 loud failure, not silent corruption.
 
-### Why `AReal` is not `Copy`
+### What a copy of an `AReal` is
 
-A Rust ergonomics question: why does `AReal` move on assignment when
-`f64` copies? The answer is correctness: an `AReal` carries a slot
-identity. Two `AReal`s with the same slot are not two independent
-variables — they are two *references* to the same node on the tape.
-
-If we made `AReal` `Copy`, the lines
+`AReal` is `Copy`, like `f64` — but the two copies mean different
+things. An `AReal` is a value plus a slot identity, and copying it
+duplicates the *reference* to the recorded variable, not the variable:
+both copies share one slot and therefore one adjoint.
 
 ```rust
-let x = AReal::new(1.0);
-let y = x;        // would copy under Copy
-let z = x + y;    // x and y are the same tape slot
+let x = AReal::input(1.0, &mut tape);
+let y = x;        // the same variable, seen twice
+let z = x + y;    // records two operands to x's slot
 ```
 
-would tape-record `x + x`, not `x + y` — because both operands have
-the same slot. The reverse sweep would scatter `2 * ∂z/∂x` to that
-slot's `derivatives` entry. This is fine if you wanted `2x`, wrong if
-you wanted two independent inputs.
-
-Rust's move semantics on non-`Copy` types make the difference
-explicit: `let y = x` *moves*, and `x + y` is a compile error
-("borrow of moved value"). To get two independent inputs, you must
-*construct* them as `AReal::new(1.0)` twice. The non-`Copy` design
-catches the bug at compile time. `f64` is `Copy` because two `f64`s
-of the same value are interchangeable; two `AReal`s of the same slot
-are not.
+The reverse sweep scatters both contributions to that one slot, so
+`x.adjoint(&tape)` is `2` — correct for `z = 2x`, which is what this
+program computes. If two *independent* inputs were meant, they must be
+two registrations: `AReal::input(1.0, &mut tape)` twice, or
+`register_input` over a slice. `Copy` was chosen because the active
+type is used exactly where `f64` would be — `x * x`, `&x * &x`,
+`x.clone() * x.clone()` all spell the same computation — and the
+`CopyableReal` bound lets a generic body say so without clones.
 
 ### Affine types and the tape lifecycle
 
@@ -250,8 +252,9 @@ profile, and adds Rust's safety guarantees on top.
 This chapter is about implementation, not asymptotics. The numbers to
 internalise:
 
-- **40 bytes per binary op** on the tape, plus 8 bytes per
-  intermediate for the derivative slot.
+- **36 bytes per binary op** on the tape (one 4-byte statement, two
+  16-byte operands), plus 8 bytes per intermediate for the derivative
+  slot: 44 B all in.
 - **~3× primal cost** for tape recording in forward pass on `AReal`.
 - **~2× primal cost** for the reverse sweep.
 - **One TLS load per op** to find the active tape — single-digit

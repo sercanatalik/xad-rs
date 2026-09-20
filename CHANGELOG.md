@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — forward-mode weighted aggregates take the scalar-operand spelling
+
+`Jet1`, `JetK<K>`, and `Jet2` accumulated `weighted_sum` / `weighted_dot` as
+`Self::constant(w) * x`: a full binary chain rule per term that scaled the
+constant's zero tangent by `x`'s value and added it — twice the lane work in
+`JetK`, an extra `0·x` in `Jet1` and `Jet2`, and a NaN tangent whenever `x`
+was infinite. They now accumulate `x * w` and `(x * w) * y`. Values are
+bit-identical to before and to the passive scalar's loop (multiplication
+commutes); tangents are bit-identical except that a `−0.0` can become `+0.0`.
+
+`docs/theory/05` is brought up to the implementation: the three-buffer layout
+section now describes the 4-byte implicit-slot statement, the 16-byte aligned
+operand with its unit-flag bits, and 44 B per binary op (it said 8 B, 12 B,
+and 40 B), and the section titled "Why `AReal` is not `Copy`" — `AReal` has
+derived `Copy` for some time — is rewritten as what a copy of an `AReal` is.
+
+### Measured — before and after
+
+Interleaved A/B, Apple M-series, rustc 1.92.0, fat LTO, ns per call
+(`openspec/changes/archive/2026-09-20-forward-weighted-aggregates/bench/`).
+
+| mode, op | n = 16 | n = 64 |
+|---|---|---|
+| `Jet1` `weighted_sum` | 4.2 → 3.3 | 20.5 → 14.4 |
+| `Jet1` `weighted_dot` | 7.2 → 6.4 | 31.5 → 29.0 |
+| `JetK<8>` `weighted_sum` | 4.8 → 4.9 | 21.5 → 19.3 |
+| `JetK<8>` `weighted_dot` | 8.9 → 7.5 | 34.0 → 31.4 |
+| `Jet2` `weighted_sum` | 5.8 → 3.3 | 27.3 → 14.9 |
+| `Jet2` `weighted_dot` | 11.9 → 9.4 | 47.2 → 37.6 |
+
+The examples protocol (no example times these aggregates) moved by at most
+3% in either direction.
+
 ### Changed — the full-Hessian guidance is measured, and it pointed the wrong way
 
 README, `docs/theory/04`, the `Jet2Vec` module docs, and `examples/hessian.rs`

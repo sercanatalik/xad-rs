@@ -397,7 +397,9 @@ impl crate::real::Real for Jet1<f64> {
     // Component-wise loops. Forward mode has no tape, so there is no fused
     // encoding to preserve — the accumulation propagates value and tangent
     // together through the same arithmetic a binary chain would use, at the
-    // same cost.
+    // same cost. Weighted terms take the scalar-operand spelling `x * w`:
+    // the value `xv·w` is the passive loop's `w·xv` bit for bit, and the
+    // tangent skips the `0·xv` a lifted constant weight would add.
     #[inline]
     fn sum(xs: &[Self]) -> Self {
         let mut acc = Jet1::constant(0.0);
@@ -420,7 +422,7 @@ impl crate::real::Real for Jet1<f64> {
         assert_eq!(ws.len(), xs.len(), "weighted_sum: slice length mismatch");
         let mut acc = Jet1::constant(0.0);
         for (&w, x) in ws.iter().zip(xs) {
-            acc += Jet1::constant(w) * *x;
+            acc += *x * w;
         }
         acc
     }
@@ -430,7 +432,7 @@ impl crate::real::Real for Jet1<f64> {
         assert_eq!(xs.len(), ys.len(), "weighted_dot: slice length mismatch");
         let mut acc = Jet1::constant(0.0);
         for ((&w, x), y) in ws.iter().zip(xs).zip(ys) {
-            acc += Jet1::constant(w) * *x * *y;
+            acc += *x * w * *y;
         }
         acc
     }
