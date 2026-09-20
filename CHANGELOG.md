@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — `erf` is a piecewise rational, at the same precision, 7–25× faster
+
+`math::erf_impl` is now the Sun `s_erf.c` piecewise minimax rational (four
+regimes on `|x|`, saturation at `±1` beyond 6), transcribed generically over
+`T: Passive`. It replaces the 6.x confluent-hypergeometric series / Gauss
+continued fraction, whose per-term dependent divisions cost 68–78 ns per call
+at the abscissae option pricers hit. Against `libm::erf` the new value is
+bit-identical on 99.3% of two million random points over `[-6.5, 6.5]` and
+never more than 0.65 ulp away; the reference grid in `tests/erf_precision.rs`
+gained the regime boundaries and still pins 5 ulp.
+
+This is a **value** change under the passive-reference rule: every mode reaches
+`erf` through `Passive::erf_value` on the passive scalar, so `erf`, `erfc`, and
+`norm_cdf` move by at most an ulp or so, identically in every mode. **No
+derivative changed**: the derivative table keeps the analytic `(2/√π)·e^{−x²}`,
+and the `Jet1` / `JetK` `erf_value` overrides keep pairing the value with the
+exact tangent. `erfc` remains exactly `1 − erf`.
+
+Stale prose that still described the Abramowitz & Stegun 7.1.26 polynomial as
+the current `erf` (`elementaries.rs`, `jet2vec.rs`, `examples/fx_option.rs`)
+is corrected.
+
+### Measured — before and after
+
+Apple M-series, rustc 1.92.0, fat LTO, five runs, medians of the examples'
+printed figures (`openspec/changes/erf-rational-value-path/bench/`).
+
+- Scalar `erf`, probe crate: **78 → 3.0 ns** at `|x| < 0.8`, **68 → 10 ns** on
+  `1.26..2.85`, 17 → 9.4 ns on the tail; `norm_cdf` at the money 8.6 → 3.1 ns.
+- Garman–Kohlhagen body, `jetk_gradient`: `Jet1 × 6` **209 → 161 ns**,
+  `JetK<4>` 117 → 102, `JetK<8>` **91 → 77 ns**, `JetK<16>` 105 → 93; reverse
+  on a warm tape 215 → 207 ns. `fx_option`'s `Jet2` spot gamma 33 → 27 ns.
+- Noise controls (no `erf` in the body): every `swap_pricer` and
+  `jetk_gradient` swap-arm figure landed inside its own five-run spread.
+
 ## [7.2.1] - 2026-08-27
 
 ### Fixed — `Jet2` takes a power the way the passive scalar does

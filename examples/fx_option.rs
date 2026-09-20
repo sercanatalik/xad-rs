@@ -382,8 +382,8 @@ fn main() {
     println!("  max |grad_AReal − analytic|      = {:.2e}", max_err_rev);
     println!("  |gamma_Jet2 − analytic|          = {:.2e}", gamma_err);
 
-    // erf() uses the A&S 7.1.26 approximation (~1.5e-7 abs error), so the
-    // AD–vs–analytic discrepancy lives at the same order of magnitude.
+    // erf() is full precision (~1 ulp), so AD and the closed form agree to
+    // roundoff; the tolerance is left loose to stay robust to platform libm.
     let tol = 5e-6;
     assert!(
         price_err < tol,

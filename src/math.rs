@@ -434,10 +434,9 @@ pub mod fwdk {
 /// Error function `erf(x)` on a passive scalar.
 ///
 /// Routed through [`Passive::erf_value`], so plain `f64` gets the
-/// full-precision split evaluation in [`erf_impl`] (measured worst relative
-/// error `1.3e-15` against a correctly-rounded reference over a dense
-/// `[-6.5, 6.5]` sweep) while `Jet1<T>` gets that value paired with the
-/// **exact** analytic tangent. The AD-aware variants live in [`ad::erf`]
+/// full-precision piecewise rational in [`erf_impl`] (about 1 ulp against a
+/// correctly rounded reference; `tests/erf_precision.rs` pins 5 ulp) while
+/// `Jet1<T>` gets that value paired with the **exact** analytic tangent. The AD-aware variants live in [`ad::erf`]
 /// and [`fwd::erf`].
 #[inline]
 pub fn erf<T: Passive>(x: T) -> T {
@@ -463,62 +462,131 @@ pub fn erfc<T: Passive>(x: T) -> T {
 /// Never call this directly on a `Jet1`; use [`erf`] (or the trait method)
 /// so the exact-tangent override applies.
 ///
-/// Two regimes, both cancellation-free by construction:
+/// The piecewise minimax rational of Sun's `s_erf.c` (fdlibm), transcribed
+/// generically over `T: Passive`. Four regimes on `|x|`, each a fixed-cost
+/// rational in the regime's natural variable, plus saturation:
 ///
-/// - `|x| ≤ 3`: the confluent-hypergeometric series
-///   `erf(x) = (2/√π)·e^{−x²}·Σ_{n≥0} x·(2x²)ⁿ/(2n+1)!!` — every term is
-///   positive, so the sum carries no alternating-series cancellation; ≤ 43
-///   terms to machine epsilon at the switch point.
-/// - `|x| > 3`: `erf = 1 − erfc` with `erfc` from the Gauss continued
-///   fraction `erfc(x) = (e^{−x²}/√π) / (x + (1/2)/(x + (2/2)/(x + …)))`,
-///   evaluated backward at fixed depth 24 (depth 20 already reaches machine
-///   precision at the switch point, measured). `erfc(3) ≈ 2.2e-5`, so the
-///   `1 − erfc` subtraction costs no relative precision in `erf`.
+/// - `|x| < 0.84375`: `x + x·P(x²)/Q(x²)`, with a tiny-argument short cut
+///   below `2⁻²⁸` so `erf(x) ≈ (2/√π)·x` rounds correctly.
+/// - `0.84375 ≤ |x| < 1.25`: `erf(1) + P(s)/Q(s)`, `s = |x| − 1`.
+/// - `1.25 ≤ |x| < 6`: `1 − e^{−x² − 9/16 + R(1/x²)/S(1/x²)} / |x|`, with two
+///   coefficient sets split at `|x| = 1/0.35`. The `x²` is formed from a copy
+///   of `x` with its low 32 mantissa bits cleared, so `e^{−z² − 9/16}` is
+///   exact enough for the correction factor `e^{(z−x)(z+x) + R/S}` to carry
+///   no cancellation.
 /// - `|x| ≥ 6`: `erfc < 2⁻⁵⁴`, so `erf` saturates at `±1` exactly in `f64`.
 ///
-/// Replaces the Abramowitz & Stegun 7.1.26 polynomial (~1.5e-7 absolute),
-/// whose error was measurable through `norm_cdf` in downstream option
-/// pricers — and whose *derivative* disagreed with the exact-tangent
-/// override by ~1e-5 locally, making finite differences of the value the
-/// approximate side of any AD-vs-FD comparison.
+/// Worst error is about 1 ulp against a correctly rounded reference
+/// (`tests/erf_precision.rs` pins 5 ulp over a grid concentrated at the regime
+/// boundaries). This replaced the confluent-hypergeometric series /
+/// Gauss continued fraction of 6.x, whose per-term dependent divisions cost
+/// 68–78 ns per call at the abscissae option pricers hit; the rational costs
+/// a single `exp` plus one rational at ~7–11 ns, at the same accuracy. It
+/// is a value-only change: every mode reaches `erf` through
+/// [`Passive::erf_value`] on the passive scalar, and the derivative table
+/// keeps the analytic `(2/√π)·e^{−x²}` (see the passive-reference rule in
+/// [`crate::real`]).
 pub(crate) fn erf_impl<T: Passive>(x: T) -> T {
+    #[inline(always)]
+    fn c<T: Passive>(v: f64) -> T {
+        T::from(v).unwrap()
+    }
     if x.is_nan() {
         return x;
     }
     let sign = if x < T::zero() { -T::one() } else { T::one() };
     let ax = x.abs();
-    if ax >= T::from(6.0).unwrap() {
+
+    if ax < c(0.84375) {
+        if ax < c(3.725_290_298_461_914e-9) {
+            // |x| < 2^-28: erf(x) = x·(1 + 2/√π) to full precision, spelled
+            // as in fdlibm to avoid spurious underflow.
+            return c::<T>(0.125) * (c::<T>(8.0) * x + c::<T>(1.027_033_336_764_100_690_53) * x);
+        }
+        let z = x * x;
+        let r = c::<T>(1.283_791_670_955_125_585_61e-1)
+            + z * (c::<T>(-3.250_421_072_470_014_993_70e-1)
+                + z * (c::<T>(-2.848_174_957_559_851_047_66e-2)
+                    + z * (c::<T>(-5.770_270_296_489_441_591_57e-3)
+                        + z * c::<T>(-2.376_301_665_665_016_260_84e-5))));
+        let s = T::one()
+            + z * (c::<T>(3.979_172_239_591_553_528_19e-1)
+                + z * (c::<T>(6.502_224_998_876_729_444_85e-2)
+                    + z * (c::<T>(5.081_306_281_875_765_627_76e-3)
+                        + z * (c::<T>(1.324_947_380_043_216_445_26e-4)
+                            + z * c::<T>(-3.960_228_278_775_368_123_20e-6)))));
+        return x + x * (r / s);
+    }
+
+    if ax < c(1.25) {
+        let s = ax - T::one();
+        let p = c::<T>(-2.362_118_560_752_659_440_77e-3)
+            + s * (c::<T>(4.148_561_186_837_483_316_66e-1)
+                + s * (c::<T>(-3.722_078_760_357_013_238_47e-1)
+                    + s * (c::<T>(3.183_466_199_011_617_536_74e-1)
+                        + s * (c::<T>(-1.108_946_942_823_966_774_76e-1)
+                            + s * (c::<T>(3.547_830_432_561_823_593_71e-2)
+                                + s * c::<T>(-2.166_375_594_868_790_843_00e-3))))));
+        let q = T::one()
+            + s * (c::<T>(1.064_208_804_008_442_282_86e-1)
+                + s * (c::<T>(5.403_979_177_021_710_489_37e-1)
+                    + s * (c::<T>(7.182_865_441_419_626_628_68e-2)
+                        + s * (c::<T>(1.261_712_198_087_616_421_12e-1)
+                            + s * (c::<T>(1.363_708_391_202_905_073_62e-2)
+                                + s * c::<T>(1.198_449_984_679_910_741_70e-2))))));
+        let erx: T = c(8.450_629_115_104_675_292_97e-1);
+        return sign * (erx + p / q);
+    }
+
+    if ax >= c(6.0) {
         return sign;
     }
-    let x2 = ax * ax;
-    if ax <= T::from(3.0).unwrap() {
-        let two_x2 = x2 + x2;
-        let mut term = ax;
-        let mut sum = ax;
-        let mut n = 1u32;
-        // ≤ 43 iterations at |x| = 3; the cap is an overflow backstop, not a
-        // convergence budget.
-        while n <= 200 {
-            term = term * two_x2 / T::from(2 * n + 1).unwrap();
-            sum += term;
-            if term <= sum * T::epsilon() {
-                break;
-            }
-            n += 1;
-        }
-        let two_over_sqrt_pi = T::from(std::f64::consts::FRAC_2_SQRT_PI).unwrap();
-        sign * two_over_sqrt_pi * (-x2).exp() * sum
+
+    let s = T::one() / (ax * ax);
+    let (r, q) = if ax < c(1.0 / 0.35) {
+        let r = c::<T>(-9.864_944_034_847_148_227_05e-3)
+            + s * (c::<T>(-6.938_585_727_071_817_643_72e-1)
+                + s * (c::<T>(-1.055_862_622_532_329_098_14e1)
+                    + s * (c::<T>(-6.237_533_245_032_600_603_96e1)
+                        + s * (c::<T>(-1.623_966_694_625_734_703_55e2)
+                            + s * (c::<T>(-1.846_050_929_067_110_359_94e2)
+                                + s * (c::<T>(-8.128_743_550_630_659_342_46e1)
+                                    + s * c::<T>(-9.814_329_344_169_145_485_92)))))));
+        let q = T::one()
+            + s * (c::<T>(1.965_127_166_743_925_712_92e1)
+                + s * (c::<T>(1.376_577_541_435_190_426_00e2)
+                    + s * (c::<T>(4.345_658_774_752_292_288_21e2)
+                        + s * (c::<T>(6.453_872_717_332_678_803_36e2)
+                            + s * (c::<T>(4.290_081_400_275_678_333_86e2)
+                                + s * (c::<T>(1.086_350_055_417_794_351_34e2)
+                                    + s * (c::<T>(6.570_249_770_319_281_701_35)
+                                        + s * c::<T>(-6.042_441_521_485_809_874_38e-2))))))));
+        (r, q)
     } else {
-        let mut f = T::zero();
-        let mut k = 24u32;
-        while k >= 1 {
-            f = T::from(k).unwrap() * T::from(0.5).unwrap() / (ax + f);
-            k -= 1;
-        }
-        let sqrt_pi = T::from(2.0 / std::f64::consts::FRAC_2_SQRT_PI).unwrap();
-        let erfc = (-x2).exp() / (sqrt_pi * (ax + f));
-        sign * (T::one() - erfc)
-    }
+        let r = c::<T>(-9.864_942_924_700_099_285_97e-3)
+            + s * (c::<T>(-7.992_832_376_805_230_065_74e-1)
+                + s * (c::<T>(-1.775_795_491_775_475_198_89e1)
+                    + s * (c::<T>(-1.606_363_848_558_219_160_62e2)
+                        + s * (c::<T>(-6.375_664_433_683_896_277_22e2)
+                            + s * (c::<T>(-1.025_095_131_611_077_249_54e3)
+                                + s * c::<T>(-4.835_191_916_086_513_970_19e2))))));
+        let q = T::one()
+            + s * (c::<T>(3.033_806_074_348_245_829_24e1)
+                + s * (c::<T>(3.257_925_129_965_739_188_26e2)
+                    + s * (c::<T>(1.536_729_586_084_436_959_94e3)
+                        + s * (c::<T>(3.199_858_219_508_595_539_08e3)
+                            + s * (c::<T>(2.553_050_406_433_164_425_83e3)
+                                + s * (c::<T>(4.745_285_412_069_553_672_15e2)
+                                    + s * c::<T>(-2.244_095_244_658_581_833_62e1)))))));
+        (r, q)
+    };
+    // `z`: `ax` with its low 32 mantissa bits cleared, so `z·z` is exact in
+    // `f64` and the split `e^{−z²−9/16}·e^{(z−ax)(z+ax)+R/S}` is
+    // cancellation-free. Exact for `f64`; for `f32` the cleared value is
+    // still representable.
+    let z: T = c(f64::from_bits(ax.to_f64().unwrap().to_bits() & 0xffff_ffff_0000_0000));
+    let tail = (-z * z - c::<T>(0.5625)).exp() * ((z - ax) * (z + ax) + r / q).exp();
+    sign * (T::one() - tail / ax)
 }
 
 /// Standard normal PDF: `φ(x) = (1/√(2π)) · exp(-x²/2)`.

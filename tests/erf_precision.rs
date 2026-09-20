@@ -1,6 +1,7 @@
-//! Accuracy pins for the full-precision `erf` (series ≤ 3, Gauss continued
-//! fraction above — see `math::erf_impl`), which replaced the Abramowitz &
-//! Stegun 7.1.26 polynomial (~1.5e-7 absolute).
+//! Accuracy pins for the full-precision `erf` (the Sun `s_erf.c` piecewise
+//! rational — see `math::erf_impl`), which replaced the 6.x series /
+//! continued fraction, which in turn replaced the Abramowitz & Stegun
+//! 7.1.26 polynomial (~1.5e-7 absolute).
 //!
 //! Reference values are CPython's `math.erf` (platform libm, correctly
 //! rounded to within ~1 ulp), generated independently of this
@@ -9,7 +10,7 @@
 //! *value*, i.e. a few ulp of 1.0) over a dense 53k-point sweep of
 //! `[-6.5, 6.5]`; against the old polynomial the same sweep measured
 //! `1.5e-7`. The grid below concentrates points where the implementation
-//! changes regime: around the series/continued-fraction switch at `|x| = 3`
+//! changes regime: the rational's boundaries at `0.84375`, `1.25`, `1/0.35`,
 //! and the `±1` saturation at `|x| = 6`.
 //!
 //! Also pinned: the properties an approximation can silently lose — oddness,
@@ -33,13 +34,25 @@ const ERF_REFERENCE: &[(f64, f64)] = &[
     (0.25, 0.2763263901682369),
     (0.5, 0.5204998778130465),
     (0.75, 0.7111556336535152),
+    // Both sides of the implementation's first regime boundary (0.84375).
+    (0.8437499, 0.7672256058623133),
+    (0.84375, 0.7672256612323416),
+    (0.8437501, 0.7672257166023607),
     (1.0, 0.8427007929497148),
+    // Both sides of the second regime boundary (1.25).
+    (1.2499999, 0.922900104604343),
+    (1.25, 0.9229001282564582),
+    (1.2500001, 0.9229001519085676),
     (1.5, 0.9661051464753108),
     // The prototype sweep's worst-error abscissa.
     (1.910464943267, 0.9931035894124023),
     (2.0, 0.9953222650189527),
     (2.5, 0.999593047982555),
-    // Both sides of the series/continued-fraction switch.
+    // Both sides of the tail coefficient-set switch (1/0.35).
+    (2.8571427, 0.9999466876380887),
+    (2.857142857142857, 0.9999466876886116),
+    (2.8571429, 0.9999466877023906),
+    // Around 3, where the previous algorithm switched regimes.
     (2.999999, 0.999977909363748),
     (3.0, 0.9999779095030015),
     (3.000001, 0.9999779096422541),

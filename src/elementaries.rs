@@ -27,12 +27,14 @@
 //!
 //! The `erf`-family *values* go through [`Passive::erf_value`] /
 //! [`Passive::inv_norm_cdf_value`](crate::passive::Passive) rather than a
-//! free polynomial function. For `f32`/`f64` these are the A&S 7.1.26 /
-//! Acklam approximations; for the nested forward-over-adjoint scalar
-//! `Jet1<T>` they are overridden to carry the **exact** analytic tangent
-//! instead of the approximation polynomial's derivative — see
+//! free function. For `f32`/`f64` these are the full-precision piecewise
+//! rational `erf` (`math::erf_impl`, ~1 ulp) and Acklam's `inv_norm_cdf`
+//! (~1.15e-9); for the nested forward-over-adjoint scalars `Jet1<T>` /
+//! `JetK<T, K>` they are overridden to carry the **exact** analytic tangent
+//! instead of the value algorithm's own derivative — see
 //! `jet1_passive.rs`. Without the override, second-order results that
-//! flow through `erf` pick up the polynomial's derivative error (~1e-6).
+//! flow through `inv_norm_cdf` would pick up the approximation's derivative
+//! error, and `erf`'s would depend on the value algorithm's rounding.
 //!
 //! [`Passive::erf_value`]: crate::passive::Passive::erf_value
 

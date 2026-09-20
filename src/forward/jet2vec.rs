@@ -112,11 +112,10 @@
 //! `ln`, `sqrt`, `tanh`, `atan`, `asinh`, `erf`, ...) from
 //! `(f, f', f'')` closure triples.
 //!
-//! The `erf` *value* goes through the Abramowitz-Stegun 7.1.26 polynomial
-//! approximation (~1.5e-7 absolute error, same as `crate::math::erf`),
-//! but its analytical derivatives `(2/√π)·exp(-u²)` and `-2u·g'(u)` use
-//! pure `T::exp` and are therefore precision-exact for the chosen `T` —
-//! Hessian cells flowing through `erf` enjoy full `T` precision.
+//! The `erf` *value* goes through the crate's full-precision piecewise
+//! rational (`crate::math::erf`, ~1 ulp), and its analytical derivatives
+//! `(2/√π)·exp(-u²)` and `-2u·g'(u)` use pure `T::exp` — Hessian cells
+//! flowing through `erf` carry full `T` precision in value and derivative.
 //!
 //! ## Correctness proof
 //!
@@ -133,9 +132,9 @@
 //!   vanna = `H[0,4]`) at 1e-11 against `exp(-rf·T)·φ(d1)/(S·σ·√T)` and
 //!   friends; secondary asserts all 36 entries at 5e-5 against
 //!   `xad_rs::compute_hessian` (exact forward-over-adjoint,
-//!   `AReal<Jet1<f64>>`). The 5e-5 bound absorbs the A&S `erf`
-//!   approximation's derivative error in the nested value path of that
-//!   cross-check — see the `tests/jet2vec_finance.rs` module docs.
+//!   `AReal<Jet1<f64>>`). The 5e-5 bound predates the full-precision
+//!   `erf`; both engines now agree far inside it — see the
+//!   `tests/jet2vec_finance.rs` module docs.
 //!
 //! ## No lifetime parameters
 //!
@@ -975,9 +974,9 @@ mod tests {
     fn test_elementary_erf_at_xy() {
         // f(x, y) = erf(x + y) at (0.3, 0.4), u = 0.7
         //
-        // Note: `crate::math::erf` uses the A&S 7.1.26 polynomial
-        // approximation (~1.5e-7 value error). The *derivative* assertions
-        // stay at 1e-14 because g'/g'' use only f64::exp + arithmetic.
+        // `crate::math::erf` is full precision (~1 ulp); the derivative
+        // assertions are at 1e-14 because g'/g'' use only f64::exp +
+        // arithmetic.
         let x = Jet2Vec::variable(0.3_f64, 0, 2);
         let y = Jet2Vec::variable(0.4_f64, 1, 2);
         let f = (&x + &y).erf();

@@ -19,9 +19,9 @@ pub trait Passive:
 {
     /// Value of the Gaussian error function `erf(self)`.
     ///
-    /// Default: the full-precision split evaluation in
-    /// [`crate::math::erf_impl`] (series below `|x| = 3`, Gauss continued
-    /// fraction above; worst measured relative error `1.3e-15`). `Jet1<T>`
+    /// Default: the full-precision piecewise minimax rational in
+    /// [`crate::math::erf_impl`] (Sun `s_erf.c` family; about 1 ulp against
+    /// a correctly rounded reference). `Jet1<T>`
     /// **overrides** this to pair the value with the *exact* analytic
     /// tangent `(2/√π)·e^{-x²}·ẋ` — evaluating the implementation in `Jet1`
     /// arithmetic would propagate the approximation's own derivative, which
