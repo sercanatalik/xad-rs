@@ -28,14 +28,31 @@ pub fn compute_hessian<F>(inputs: &[f64], func: F) -> Array2<f64>
 where
     F: Fn(&[AReal<Jet1<f64>>]) -> AReal<Jet1<f64>>,
 {
-    let n = inputs.len();
-    let mut hessian = Array2::<f64>::zeros((n, n));
-
     // One tape reused across all n direction sweeps: direction k's recording
     // replays the same op sequence as direction 0, so after the first sweep
     // every subsequent `record()` runs entirely in already-grown buffers —
     // no per-direction allocation churn.
     let mut tape = Tape::<Jet1<f64>>::new(true);
+    compute_hessian_with(&mut tape, inputs, func)
+}
+
+/// [`compute_hessian`] on a tape the caller owns.
+///
+/// Each of the `n` direction passes begins a fresh recording on `tape`
+/// through [`Tape::record`], retaining its allocation, and the function
+/// returns with the tape inactive and still allocated for the next call.
+/// This is the form for a loop over positions or scenarios; the bare driver
+/// constructs a tape per call. Same value and Hessian bit for bit as the bare
+/// form, on a fresh tape and across reuse.
+///
+/// # Panics
+/// Panics if a tape is already active on this thread.
+pub fn compute_hessian_with<F>(tape: &mut Tape<Jet1<f64>>, inputs: &[f64], func: F) -> Array2<f64>
+where
+    F: Fn(&[AReal<Jet1<f64>>]) -> AReal<Jet1<f64>>,
+{
+    let n = inputs.len();
+    let mut hessian = Array2::<f64>::zeros((n, n));
 
     for k in 0..n {
         let _rec = tape.record();
@@ -46,16 +63,16 @@ where
             .enumerate()
             .map(|(i, &v)| AReal::new(Jet1::new(v, if i == k { 1.0 } else { 0.0 })))
             .collect();
-        AReal::register_input(&mut ad_inputs, &mut tape);
+        AReal::register_input(&mut ad_inputs, tape);
 
         let mut output = func(&ad_inputs);
-        AReal::register_output(std::slice::from_mut(&mut output), &mut tape);
-        output.set_adjoint(&mut tape, Jet1::constant(1.0));
+        AReal::register_output(std::slice::from_mut(&mut output), tape);
+        output.set_adjoint(tape, Jet1::constant(1.0));
         tape.compute_adjoints();
 
         // The tangent of input j's adjoint is ∂²f/∂x_j∂x_k = H[[j, k]].
         for (j, inp) in ad_inputs.iter().enumerate() {
-            hessian[[j, k]] = inp.adjoint(&tape).derivative();
+            hessian[[j, k]] = inp.adjoint(tape).derivative();
         }
     }
 
@@ -143,13 +160,32 @@ where
     JetK<f64, K>: crate::tape::TapeStorage,
     F: Fn(&[AReal<JetK<f64, K>>]) -> AReal<JetK<f64, K>>,
 {
-    const { assert!(K > 0, "compute_hessian_k: K must be at least 1") };
-    let n = inputs.len();
-    let mut hessian = Array2::<f64>::zeros((n, n));
     // One tape reused across all ⌈n/K⌉ block sweeps (see compute_hessian).
     let mut tape = Tape::<JetK<f64, K>>::new(true);
+    compute_hessian_k_with(&mut tape, inputs, func)
+}
+
+/// [`compute_hessian_k`] on a tape the caller owns — the K-wide counterpart
+/// of [`compute_hessian_with`]: every block pass records on `tape` through
+/// [`Tape::record`], and the function returns with the tape inactive and its
+/// allocation retained. Bit-identical to the bare form.
+///
+/// # Panics
+/// Panics if a tape is already active on this thread.
+pub fn compute_hessian_k_with<const K: usize, F>(
+    tape: &mut Tape<JetK<f64, K>>,
+    inputs: &[f64],
+    func: F,
+) -> Array2<f64>
+where
+    JetK<f64, K>: crate::tape::TapeStorage,
+    F: Fn(&[AReal<JetK<f64, K>>]) -> AReal<JetK<f64, K>>,
+{
+    const { assert!(K > 0, "compute_hessian_k_with: K must be at least 1") };
+    let n = inputs.len();
+    let mut hessian = Array2::<f64>::zeros((n, n));
     for block in (0..n).step_by(K) {
-        let tangents = hessian_k_block(&mut tape, inputs, block, &func);
+        let tangents = hessian_k_block(tape, inputs, block, &func);
         write_hessian_k_block(&mut hessian, block, &tangents);
     }
     hessian

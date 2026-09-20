@@ -47,7 +47,7 @@ the crate's own examples show it: at n = 1 `Jet1` is 17× faster than a tape pas
 (`fixed_rate_bond`), while at n = 30 reverse beats `Jet1 × 30` by 8×
 (`jetk_gradient`). Against **K lanes per pass** the crossover moves out a long
 way: on the six-input Garman–Kohlhagen body one `JetK<8>` pass takes **92 ns
-against 222 ns** for a warm-tape reverse sweep (2.4×; 6× against a fresh tape),
+against 222 ns** for a warm-tape reverse sweep (2.4×; ~3× against a fresh tape),
 and on the 30-input swap two `JetK<16>` passes (910 ns) still edge the sweep
 (1.0 µs). `JetK<16>` loses to `JetK<8>` at n = 6 — idle lanes cost register
 pressure — so pick K ≈ n rounded up to the next of {4, 8, 16} (`jetk_gradient`,
@@ -162,8 +162,11 @@ Newton loop; risk is positions × scenarios). The levers, all measured on
 Apple M-series with `lto = "fat"`:
 
 - **Reuse the tape** across valuations with `Tape::record` (RAII guard around
-  `new_recording`) instead of a fresh `Tape::new` each time — **~2.4×** on a
-  many-small-tapes workload (allocation churn was ~60% of the time).
+  `new_recording`) instead of a fresh `Tape::new` each time. A fresh tape now
+  reserves room for a small valuation (256 statements / 512 operands), so on
+  bodies that fit, reuse is worth ~1.3× on a six-input body and ~5% on a
+  30-input one; it matters most once a recording outgrows the reserve. Before
+  the reserve, a fresh tape's ~16 growth reallocations made reuse worth ~2.4×.
 - **Vector reverse mode** — `compute_jacobian_rev` recovers a full `m × n` Jacobian
   in one sweep (`Tape::compute_adjoints_vector`), ~1.75× on a wide Jacobian. A
   caller with its own recording can drive `Tape::compute_adjoints_vector` directly.

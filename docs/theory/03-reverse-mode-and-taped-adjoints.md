@@ -301,11 +301,14 @@ buffers **in place**, keeping the already-allocated capacity, and
 deactivates on drop — including on unwind from a panic.
 
 This is the lever that matters for the workload reverse mode is usually
-run on: many small valuations rather than one huge one. Reusing a tape
-across valuations instead of constructing a fresh `Tape::new` each time
-is worth ~2.4× on that shape, because allocation churn was about 60% of
-the runtime. `Tape::with_capacity` sizes the buffers up front when the
-recording size is known.
+run on: many small valuations rather than one huge one. A fresh
+`Tape::new` reserves room for a small valuation (256 statements, 512
+operands), so bodies that fit record with no buffer growth; before that
+reserve, the ~16 growth reallocations made reusing a tape worth ~2.4× on
+this shape. With it, reuse is worth ~1.3× on a six-input body and ~5% on
+a 30-input one, and matters most once a recording outgrows the reserve.
+`Tape::with_capacity` sizes the buffers up front when the recording size
+is known.
 
 Adjoints are a separate buffer from the statement and operation buffers,
 so call `clear_derivatives` if you also want a clean adjoint vector.

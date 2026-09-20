@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — the Hessian drivers on a tape the caller owns
+
+`compute_hessian_with(tape, inputs, f)` and
+`compute_hessian_k_with::<K>(tape, inputs, f)`: the 7.1.0 `_with` idiom
+extended to second order. Every direction or block pass records on the
+caller's tape through `Tape::record`, and the driver returns with the tape
+inactive and its allocation retained. The bare forms delegate. Same value and
+Hessian bit for bit, on a fresh tape and across reuse over different
+functions; a panic inside the function leaves no tape active
+(`tests/hessian_with.rs`).
+
+### Changed — a fresh tape starts with room for a small valuation
+
+`Tape::new` now reserves `Tape::DEFAULT_STATEMENTS = 256` statements and
+`Tape::DEFAULT_OPERATIONS = 512` operands (about 11 KB for `f64`), enough for
+every example body in the crate to record with no growth. A tape that started
+empty paid about sixteen small reallocations before a 200-statement recording
+settled, which was most of the gap between a fresh tape and a reused one.
+`with_capacity(0, 0)` still gives a minimal tape. No value or derivative
+changed. Prose that quoted the old fresh-versus-warm ratio (README,
+`docs/theory/03`, `tape.rs`) is re-measured.
+
+### Measured — before and after
+
+Apple M-series, rustc 1.92.0, fat LTO, five runs, medians
+(`openspec/changes/archive/2026-09-20-fresh-tape-reserve-and-hessian-with/bench/`).
+Spotlight was indexing during the post run and the forward-only noise
+controls read 8–10% slower, so the deltas are slightly understated.
+
+- `fx_option` reverse-mode gradient, fresh tape per call: **581 → 250 ns**.
+- `jetk_gradient`, Garman–Kohlhagen: reverse on a fresh tape **536 → 286 ns**
+  against 224 ns warm; 30-tenor swap: fresh **1628 → 1083 ns** against 1034 ns
+  warm.
+- `swap_pricer` reverse delta (fresh tape per trial): **1487 → 1051 ns**; its
+  30×30 `compute_hessian_k::<8>` line 13.2 → 13.4 µs (one tape per call,
+  four blocks; within spread).
+
 ### Changed — unit operands are encoded, not multiplied
 
 An operand whose multiplier is exactly `±1` — every `+`, `−`, negation,

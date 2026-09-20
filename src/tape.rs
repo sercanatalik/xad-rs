@@ -170,31 +170,45 @@ impl<T: TapeStorage> Tape<T> {
     /// slot numbers. Registering one more panics in [`push_nullary`](Tape::push_nullary).
     pub const MAX_VARIABLES: u32 = 1 << 30;
 
-    /// Create a new tape. The `_activate` flag is accepted for backwards
-    /// compatibility with the C++ XAD API shape but is **ignored**: you
-    /// must always call [`Tape::activate`] explicitly after the tape
-    /// reaches its final storage location, because the tape's address is
-    /// stored in thread-local storage and must remain stable.
+    /// Statements a fresh [`Tape::new`] reserves. With
+    /// [`DEFAULT_OPERATIONS`](Tape::DEFAULT_OPERATIONS) this covers every
+    /// example body in the crate (37–215 statements, 47–246 operands per
+    /// valuation) with no buffer growth, for about 11 KB when `T = f64`.
+    pub const DEFAULT_STATEMENTS: usize = 256;
+    /// Operands a fresh [`Tape::new`] reserves — see
+    /// [`DEFAULT_STATEMENTS`](Tape::DEFAULT_STATEMENTS).
+    pub const DEFAULT_OPERATIONS: usize = 512;
+
+    /// Create a new tape with room for a small valuation
+    /// ([`DEFAULT_STATEMENTS`](Tape::DEFAULT_STATEMENTS) statements,
+    /// [`DEFAULT_OPERATIONS`](Tape::DEFAULT_OPERATIONS) operands). A tape
+    /// that started empty paid about sixteen small reallocations before a
+    /// 200-statement recording settled, which was most of the gap between a
+    /// fresh tape and a reused one; the reserve removes it for small bodies.
+    /// For larger recordings use [`with_capacity`](Tape::with_capacity); for
+    /// a minimal tape, `with_capacity(0, 0)`.
+    ///
+    /// The `_activate` flag is accepted for backwards compatibility with the
+    /// C++ XAD API shape but is **ignored**: you must always call
+    /// [`Tape::activate`] explicitly after the tape reaches its final storage
+    /// location, because the tape's address is stored in thread-local storage
+    /// and must remain stable.
     ///
     /// ```
     /// let mut tape = xad_rs::Tape::<f64>::new(true);
     /// tape.activate();
     /// ```
     pub fn new(_activate: bool) -> Self {
-        Tape {
-            statements: vec![0],
-            operations: Vec::new(),
-            derivatives: Vec::new(),
-        }
+        Self::with_capacity(Self::DEFAULT_STATEMENTS, Self::DEFAULT_OPERATIONS)
     }
 
     /// Create a tape with pre-reserved capacity for `n_statements` and
     /// `n_operations`, avoiding geometric-growth reallocation copies on large
     /// recordings. Capacities are hints; the tape still grows as needed.
+    /// [`Tape::new`] is `with_capacity(256, 512)`.
     ///
     /// Pair with [`record`](Tape::record) to reuse one warmed tape across many
-    /// valuations — on small-tape workloads this is ~2.4× faster than a fresh
-    /// [`Tape::new`] per valuation (the allocation churn is amortized away).
+    /// valuations, so the allocation itself is also out of the loop.
     ///
     /// ```
     /// let mut tape = xad_rs::Tape::<f64>::with_capacity(1024, 4096);
@@ -266,8 +280,7 @@ impl<T: TapeStorage> Tape<T> {
     /// This is the ergonomic way to reuse one tape across many valuations: the
     /// previous recording's allocation is retained (`new_recording` only
     /// clears), so a loop over scenarios/positions amortizes tape allocation
-    /// instead of paying a fresh [`Tape::new`] each time (~3× measured on a
-    /// many-small-tapes recording workload). The returned guard holds a raw pointer, not
+    /// instead of paying a fresh [`Tape::new`] each time. The returned guard holds a raw pointer, not
     /// a borrow, so the tape stays usable (e.g. for `register_input`) while the
     /// guard is alive; the guard's `Drop` deactivates the thread-local slot.
     ///

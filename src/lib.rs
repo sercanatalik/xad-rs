@@ -99,7 +99,7 @@
 //! | [`reverse`] | `AReal` |
 //! | [`math`] | AD-aware transcendentals (`sin`, `exp`, `erf`, `norm_cdf`, ...) |
 //! | [`tape`] | Reverse-mode tape and thread-local active-tape slot |
-//! | [`ops`] | `compute_derivative_fwd`, `compute_directional_derivative_fwd`, `compute_gradient_fwd_k`, `compute_gradient_rev{,_with}`, `compute_jacobian_rev{,_with}`, `compute_hessian{,_k,_k_par}`, `compute_full_hessian` |
+//! | [`ops`] | `compute_derivative_fwd`, `compute_directional_derivative_fwd`, `compute_gradient_fwd_k`, `compute_gradient_rev{,_with}`, `compute_jacobian_rev{,_with}`, `compute_hessian{,_with,_k,_k_with,_k_par}`, `compute_full_hessian` |
 
 // Keep rustdoc links honest: a doc link to a renamed/removed item is a
 // compile error, not a silently dead link.
@@ -128,4 +128,4 @@ pub use ops::{
     compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_fwd_k,
     compute_gradient_rev, compute_gradient_rev_with, compute_jacobian_rev_with,
 };
-pub use ops::{compute_hessian, compute_hessian_k, compute_hessian_k_par, compute_jacobian_rev};
+pub use ops::{compute_hessian, compute_hessian_with, compute_hessian_k, compute_hessian_k_with, compute_hessian_k_par, compute_jacobian_rev};

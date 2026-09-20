@@ -29,6 +29,6 @@ pub use derivative::{
     compute_gradient_rev, compute_gradient_rev_with,
 };
 pub use hessian::{
-    DenseHessian, compute_full_hessian, compute_hessian, compute_hessian_k, compute_hessian_k_par,
+    DenseHessian, compute_full_hessian, compute_hessian, compute_hessian_with, compute_hessian_k, compute_hessian_k_with, compute_hessian_k_par,
 };
 pub use jacobian::{compute_jacobian_rev, compute_jacobian_rev_with};
