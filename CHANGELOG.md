@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — documentation site
+
+The theory chapters are published at <https://sercanatalik.github.io/xad-rs/>
+by `.github/workflows/pages.yml`, built with mdBook from `docs/`. The site adds
+a landing page, search, typeset mathematics for the chapters' ```` ```math ````
+blocks, and a per-page contents rail; the chapters themselves are unchanged.
+
 ### Changed — forward-mode weighted aggregates take the scalar-operand spelling
 
 `Jet1`, `JetK<K>`, and `Jet2` accumulated `weighted_sum` / `weighted_dot` as

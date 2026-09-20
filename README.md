@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo.svg" width="96" height="96" alt="xad-rs mark: a forward chevron and a reverse chevron crossing to form an x">
+  </picture>
+</p>
+
 # xad-rs
 
 [![Crates.io](https://img.shields.io/crates/v/xad-rs.svg)](https://crates.io/crates/xad-rs)
@@ -25,7 +32,8 @@ Requires Rust 1.85 or newer (edition 2024).
 
 ## Documentation
 
-- **Theory** — derivations and decision-tree guidance: [`docs/README.md`](docs/README.md).
+- **Site** — the theory chapters with rendered mathematics and search: [sercanatalik.github.io/xad-rs](https://sercanatalik.github.io/xad-rs/).
+- **Theory** — the same chapters as Markdown, with decision-tree guidance: [`docs/README.md`](docs/README.md).
 - **API** — generated rustdoc: [docs.rs/xad-rs](https://docs.rs/xad-rs).
 - **Examples** — runnable, cross-checked against analytic answers: [`examples/`](examples/).
 

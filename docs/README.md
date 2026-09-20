@@ -1,5 +1,11 @@
 # `xad-rs` documentation
 
+> Rendered, with search and typeset mathematics, at
+> <https://sercanatalik.github.io/xad-rs/>. The site is built from this
+> directory by mdBook (`book.toml`, `SUMMARY.md`, `index.md`, `theme/`) and
+> published by `.github/workflows/pages.yml` on every push to `main` that
+> touches `docs/`.
+
 Long-form theory and worked examples for the `xad-rs` automatic
 differentiation library. This is the companion to the crate-level
 rustdoc on [docs.rs](https://docs.rs/xad-rs): rustdoc tells you *how* to
