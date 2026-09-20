@@ -8,8 +8,8 @@
 <header class="xl-hero">
   <div class="xl-hero-text">
     <div class="xl-eyebrow">Automatic differentiation · Rust</div>
-    <h1 class="xl-title">Exact derivatives of the code you already wrote.</h1>
-    <p class="xl-lede">Forward and reverse mode, first and second order, behind one mode-agnostic <code>Real</code> trait. No finite-difference error, no symbolic manipulation. The chain rule, applied to your program as it runs.</p>
+    <h1 class="xl-title">The chain rule, applied to your program as it runs.</h1>
+    <p class="xl-lede">Exact automatic differentiation for Rust. Forward and reverse mode, first and second order, behind one mode-agnostic <code>Real</code> trait. No finite-difference error, no symbolic manipulation: every derivative to machine precision, from the code you already run.</p>
     <div class="xl-actions">
       <a class="xl-btn xl-btn-primary" href="theory/01-automatic-differentiation.html">Read the theory</a>
       <a class="xl-btn xl-btn-secondary" href="https://docs.rs/xad-rs">API on docs.rs</a>
