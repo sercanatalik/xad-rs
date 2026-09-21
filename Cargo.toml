@@ -1,8 +1,8 @@
 [package]
 name = "xad-rs"
-version = "8.1.0"
+version = "9.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 authors = ["Sercan Atalik"]
 description = "Exact automatic differentiation for Rust — forward-mode, reverse-mode, first- and second-order, with a unified `Real` trait for mode-agnostic numerical code"
 license = "MIT"

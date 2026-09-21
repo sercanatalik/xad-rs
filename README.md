@@ -10,7 +10,7 @@
 [![Crates.io](https://img.shields.io/crates/v/xad-rs.svg)](https://crates.io/crates/xad-rs)
 [![Docs.rs](https://docs.rs/xad-rs/badge.svg)](https://docs.rs/xad-rs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
-[![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)](#installation)
+[![MSRV: 1.98](https://img.shields.io/badge/MSRV-1.98-blue.svg)](#installation)
 
 **Exact automatic differentiation for Rust.** Forward and reverse mode, first and
 second order, built around a single mode-agnostic `Real` trait. No
@@ -25,10 +25,10 @@ to your program as it runs.
 
 ```toml
 [dependencies]
-xad-rs = "8.1"
+xad-rs = "9.0"
 ```
 
-Requires Rust 1.85 or newer (edition 2024).
+Requires Rust 1.98 or newer (edition 2024).
 
 ## Documentation
 

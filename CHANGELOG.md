@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [9.0.0] - 2026-09-21
+
+### Changed — the minimum supported Rust version is 1.98
+
+`rust-version` moves from 1.85 to 1.98, the current stable release. Nothing in
+the crate needs a compiler newer than 1.85: the source, the tests, the examples
+and the doctests all build and pass unchanged on both. The bump narrows the
+supported range; it does not widen what the crate can do.
+
+It ships as a major version because raising the minimum breaks any caller
+pinned to an older toolchain — and that caller is precisely the one this
+repository cannot see. 8.1.0 remains on crates.io, remains correct, and remains
+buildable on 1.85; anyone who cannot move to 1.98 should stay on `8.1`.
+
+The README install snippet moves to `xad-rs = "9.0"`, the MSRV badge and the
+"Requires Rust" line follow it, and the CI `msrv` job now builds with
+`cargo +1.98`.
+
+The API is unchanged: same public surface, same behaviour, same numbers.
+
 ## [8.1.0] - 2026-09-20
 
 ### Changed — version only
