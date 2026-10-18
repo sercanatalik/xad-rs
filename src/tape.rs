@@ -1,0 +1,931 @@
+//! Tape for recording operations in reverse-mode automatic differentiation.
+//!
+//! The tape records a trace of all arithmetic operations performed on
+//! [`AReal`](crate::reverse::areal::AReal) values, then replays them in reverse to
+//! compute adjoints (gradients). One tape covers the whole forward pass of
+//! a computation; at the end, [`TapeData::compute_adjoints`] walks the recorded
+//! trace backwards once, accumulating partial derivatives in the
+//! derivatives buffer.
+//!
+//! # Data layout
+//!
+//! The tape uses a compact three-buffer layout (classic XAD-style):
+//!
+//! - `statements: Vec<u32>` — one entry per recorded *variable*, holding
+//!   only that statement's `op_end` pointer into the operations buffer.
+//!   **Slot numbers are implicit**: statement index `i` *is* slot
+//!   `i - 1` (index 0 is a sentinel with `op_end = 0`). Every slot —
+//!   including inputs, which record a zero-operand statement — has
+//!   exactly one statement, so nothing but `op_end` needs storing and a
+//!   statement is 4 bytes instead of 8.
+//! - `operations: Vec<Operation<T>>` — a packed stream of
+//!   `(multiplier, operand_slot)` pairs. Statement `i`'s operand range is
+//!   `[statements[i - 1], statements[i])`, which means operand lookup
+//!   is O(1) and the whole tape is a single linear scan in both
+//!   directions.
+//! - `derivatives: Vec<T>` — indexed directly by slot number. After
+//!   [`compute_adjoints`](TapeData::compute_adjoints) this is the gradient
+//!   vector for all registered variables.
+//!
+//! Slots are handed out monotonically by the push helpers (each returns
+//! the fresh LHS slot of the statement it records) and by
+//! [`TapeData::register_variable`] for inputs — the derivatives buffer is
+//! **not** touched during recording. It is materialized in one
+//! `resize(num_variables)` at the top of
+//! [`compute_adjoints`](TapeData::compute_adjoints) (or grown on demand by
+//! [`set_derivative`](TapeData::set_derivative) when seeding adjoints), so
+//! `derivatives.len() >= num_variables` holds when the reverse sweep
+//! runs and no per-slot bounds-checks are needed in its hot loop.
+//! Keeping the per-op `push(T::zero())` out of the recording fast path
+//! makes recording ~1.9× faster on op-heavy kernels.
+//!
+//! # Unit operands
+//!
+//! An operand whose multiplier is exactly `+1` or `−1` — every `+`, `−`,
+//! negation, `max`/`min`, and the fused `sum` — is recorded with two flag
+//! bits in its slot word instead of a stored multiplier: bit 31
+//! ([`Tape::UNIT`]) marks it, bit 30 ([`Tape::NEG`]) carries the sign, and
+//! the multiplier field is written as zero and never read. Both sweeps mask
+//! the slot and accumulate such an operand by a plain add or subtract, which
+//! takes the multiplier load and the multiply off the sweep's
+//! latency-critical path. `d + (±1)·a` and `d ± a` are the same `f64`, so the
+//! encoding changes no derivative bit. The cost is slot space: a tape holds at
+//! most [`Tape::MAX_VARIABLES`] (`2^30`) variables, asserted in
+//! [`TapeData::push_nullary`].
+//!
+//! # Hot-path recording helpers
+//!
+//! The three fixed-arity push methods — [`TapeData::push_nullary`],
+//! [`TapeData::push_unary`], [`TapeData::push_binary`] — are the zero-allocation
+//! fast paths used by the AReal operator impls. They push operands
+//! directly onto the operations buffer without going through any
+//! intermediate slice or `Vec`. For arbitrary-arity fused statements,
+//! [`TapeData::push_operands_bounded`] is the bulk equivalent: one capacity
+//! reserve for the whole operand batch instead of a grow check per
+//! operand.
+//!
+//! # Thread-local active tape
+//!
+//! Exactly one `Tape<T>` can be *active* per thread per scalar type at a
+//! time. The active tape is stored as a raw pointer in a thread-local
+//! `Cell<*mut Tape<T>>` (null encodes "no active tape"). Making a tape
+//! active is an explicit opt-in via [`Tape::activate`]; AReal operators
+//! read the active pointer via [`TapeStorage::get_active_ptr`] and
+//! record only if it's non-null.
+
+use crate::passive::Passive;
+use std::cell::Cell;
+use std::marker::PhantomData;
+use std::ptr;
+
+thread_local! {
+    // A null pointer encodes "no active tape" — cheaper than `Option<*mut _>`
+    // because `Cell::get()` is a single load with no runtime borrow check.
+    static ACTIVE_TAPE_F64: Cell<*mut TapeData<f64>> = const { Cell::new(ptr::null_mut()) };
+    // Forward-over-adjoint engine: a tape whose scalar is a forward dual.
+    static ACTIVE_TAPE_JET1_F64: Cell<*mut TapeData<crate::forward::jet1::Jet1<f64>>> =
+        const { Cell::new(ptr::null_mut()) };
+}
+
+/// Trait for thread-local tape storage access, implemented per concrete
+/// scalar type. The pointer is to the tape's heap-allocated
+/// [`TapeData`], never to the [`Tape`] handle itself, so it stays valid
+/// when the handle is moved.
+pub trait TapeStorage: Passive {
+    fn get_active_ptr() -> Option<*mut TapeData<Self>>;
+    fn set_active_ptr(ptr: Option<*mut TapeData<Self>>);
+}
+
+impl TapeStorage for f64 {
+    #[inline]
+    fn get_active_ptr() -> Option<*mut TapeData<f64>> {
+        let p = ACTIVE_TAPE_F64.with(|c| c.get());
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    fn set_active_ptr(ptr: Option<*mut TapeData<f64>>) {
+        ACTIVE_TAPE_F64.with(|c| c.set(ptr.unwrap_or(std::ptr::null_mut())));
+    }
+}
+
+impl TapeStorage for crate::forward::jet1::Jet1<f64> {
+    #[inline]
+    fn get_active_ptr() -> Option<*mut TapeData<crate::forward::jet1::Jet1<f64>>> {
+        let p = ACTIVE_TAPE_JET1_F64.with(|c| c.get());
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    fn set_active_ptr(ptr: Option<*mut TapeData<crate::forward::jet1::Jet1<f64>>>) {
+        ACTIVE_TAPE_JET1_F64.with(|c| c.set(ptr.unwrap_or(std::ptr::null_mut())));
+    }
+}
+
+// A recorded statement is just the upper bound of its operand range in
+// `Tape::operations`; its LHS slot is its statement index minus one. The
+// operand range of statement `i` is `[statements[i - 1], statements[i])`,
+// exploiting the fact that operand ranges are non-overlapping and laid out
+// in insertion order. The sentinel entry `statements[0] == 0` makes
+// statement 1 (slot 0) start its operands at operations[0].
+
+/// One operand of a statement: contributes `multiplier * d/d(slot)` to the
+/// LHS variable's partial derivative during the reverse sweep.
+///
+/// NOTE(perf): for `T = f64` this pads to 16 bytes (4 bytes wasted), and
+/// two attempts to reclaim them both *lost* to this layout when measured
+/// (Apple M-series, rustc 1.92), including on a deliberately LLC-busting
+/// tape — the operand stream is not the bottleneck, so the saved bandwidth
+/// never materializes as time:
+///   - SoA split (`Vec<T>` multipliers + `Vec<u32>` slots, 12 B/op):
+///     recording +97% (five capacity-checked pushes per binary op instead
+///     of three), scalar sweep +11%, 16-direction vector sweep −2%.
+///   - `repr(C, packed(4))` (12 B/op, single stream): recording +8%,
+///     scalar sweep +8.5%, 16-direction vector sweep +4% — unaligned `f64`
+///     traffic costs more than the padding saves.
+/// Keep the naturally aligned pair; re-measure before changing it.
+#[derive(Debug, Clone, Copy)]
+struct Operation<T: TapeStorage> {
+    multiplier: T,
+    slot: u32,
+}
+
+/// The tape's recording buffers and the operations on them: every push
+/// helper, both reverse sweeps, and the derivative accessors.
+///
+/// Lives on the heap behind the [`Tape`] handle, which derefs to it, so
+/// `tape.push_binary(..)` and `tape.compute_adjoints()` read as before. The
+/// thread-local active-tape slot points **here**, not at the handle:
+/// moving a `Tape` (returning it from a constructor, storing it in a
+/// struct) leaves this allocation — and the registered pointer — where it
+/// was.
+pub struct TapeData<T: TapeStorage> {
+    // Per-statement `op_end` values; index `i` is slot `i - 1` (see the
+    // module-level "Data layout" section). `statements[0]` is a sentinel 0.
+    statements: Vec<u32>,
+    operations: Vec<Operation<T>>,
+    derivatives: Vec<T>,
+}
+
+/// The tape records operations for reverse-mode AD and computes adjoints.
+///
+/// A `Tape` is a handle to a heap-allocated [`TapeData`]; it derefs to it
+/// for every recording and sweep method. Activation ([`activate`](Tape::activate),
+/// [`record`](Tape::record)) registers the data's address in a thread-local
+/// slot, so the handle itself may be moved freely while active. An active
+/// tape must still be deactivated — or dropped — on the thread that
+/// activated it: the slot is per thread, and a drop elsewhere cannot clear it.
+pub struct Tape<T: TapeStorage> {
+    data: Box<TapeData<T>>,
+}
+
+impl<T: TapeStorage> std::ops::Deref for Tape<T> {
+    type Target = TapeData<T>;
+    #[inline]
+    fn deref(&self) -> &TapeData<T> {
+        &self.data
+    }
+}
+
+impl<T: TapeStorage> std::ops::DerefMut for Tape<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut TapeData<T> {
+        &mut self.data
+    }
+}
+
+impl<T: TapeStorage> Tape<T> {
+    /// Operand-slot flag: the multiplier is exactly `±1` and is not stored
+    /// (see the module-level "Unit operands" section).
+    pub const UNIT: u32 = 1 << 31;
+    /// Operand-slot flag: a unit operand with multiplier `−1`.
+    pub const NEG: u32 = 1 << 30;
+    /// Mask recovering the slot number from an operand's slot word.
+    pub const SLOT_MASK: u32 = (1 << 30) - 1;
+    /// The most variables one tape can hold: the two flag bits leave `2^30`
+    /// slot numbers. Registering one more panics in [`push_nullary`](TapeData::push_nullary).
+    pub const MAX_VARIABLES: u32 = 1 << 30;
+
+    /// Statements a fresh [`Tape::new`] reserves. With
+    /// [`DEFAULT_OPERATIONS`](Tape::DEFAULT_OPERATIONS) this covers every
+    /// example body in the crate (37–215 statements, 47–246 operands per
+    /// valuation) with no buffer growth, for about 11 KB when `T = f64`.
+    pub const DEFAULT_STATEMENTS: usize = 256;
+    /// Operands a fresh [`Tape::new`] reserves — see
+    /// [`DEFAULT_STATEMENTS`](Tape::DEFAULT_STATEMENTS).
+    pub const DEFAULT_OPERATIONS: usize = 512;
+
+    /// Create a new tape with room for a small valuation
+    /// ([`DEFAULT_STATEMENTS`](Tape::DEFAULT_STATEMENTS) statements,
+    /// [`DEFAULT_OPERATIONS`](Tape::DEFAULT_OPERATIONS) operands). A tape
+    /// that started empty paid about sixteen small reallocations before a
+    /// 200-statement recording settled, which was most of the gap between a
+    /// fresh tape and a reused one; the reserve removes it for small bodies.
+    /// For larger recordings use [`with_capacity`](Tape::with_capacity); for
+    /// a minimal tape, `with_capacity(0, 0)`.
+    ///
+    /// The `_activate` flag is accepted for backwards compatibility with the
+    /// C++ XAD API shape but is **ignored**: you must always call
+    /// [`Tape::activate`] explicitly after the tape reaches its final storage
+    /// location, because the tape's address is stored in thread-local storage
+    /// and must remain stable.
+    ///
+    /// ```
+    /// let mut tape = xad_rs::Tape::<f64>::new(true);
+    /// tape.activate();
+    /// ```
+    pub fn new(_activate: bool) -> Self {
+        Self::with_capacity(Self::DEFAULT_STATEMENTS, Self::DEFAULT_OPERATIONS)
+    }
+
+    /// Create a tape with pre-reserved capacity for `n_statements` and
+    /// `n_operations`, avoiding geometric-growth reallocation copies on large
+    /// recordings. Capacities are hints; the tape still grows as needed.
+    /// [`Tape::new`] is `with_capacity(256, 512)`.
+    ///
+    /// Pair with [`record`](Tape::record) to reuse one warmed tape across many
+    /// valuations, so the allocation itself is also out of the loop.
+    ///
+    /// ```
+    /// let mut tape = xad_rs::Tape::<f64>::with_capacity(1024, 4096);
+    /// tape.activate();
+    /// ```
+    pub fn with_capacity(n_statements: usize, n_operations: usize) -> Self {
+        let mut statements = Vec::with_capacity(n_statements + 1);
+        statements.push(0);
+        Tape {
+            data: Box::new(TapeData {
+                statements,
+                operations: Vec::with_capacity(n_operations),
+                derivatives: Vec::with_capacity(n_statements),
+            }),
+        }
+    }
+
+    /// Address of the heap-allocated data — the identity the thread-local
+    /// slot holds. Stable across moves of the handle.
+    #[inline]
+    fn data_ptr(&self) -> *mut TapeData<T> {
+        &*self.data as *const TapeData<T> as *mut TapeData<T>
+    }
+
+    /// Activate this tape as the thread-local active tape.
+    pub fn activate(&mut self) {
+        if T::get_active_ptr().is_some() {
+            panic!("A tape is already active on this thread");
+        }
+        T::set_active_ptr(Some(self.data_ptr()));
+    }
+
+    /// Deactivate this tape if it is the currently active one.
+    pub fn deactivate(&mut self) {
+        if T::get_active_ptr() == Some(self.data_ptr()) {
+            T::set_active_ptr(None);
+        }
+    }
+
+    /// Check if this tape is the currently active one.
+    pub fn is_active(&self) -> bool {
+        T::get_active_ptr() == Some(self.data_ptr())
+    }
+
+    /// Get a pointer to the currently active tape's data.
+    pub(crate) fn get_active() -> Option<*mut TapeData<T>> {
+        T::get_active_ptr()
+    }
+
+    /// Deactivate any active tape on this thread.
+    pub fn deactivate_all() {
+        T::set_active_ptr(None);
+    }
+
+    /// Activate this tape and return an RAII guard whose `Drop`
+    /// deactivates the thread-local active tape. Replaces the
+    /// `activate()` + manual `deactivate_all()` pair when the
+    /// activation needs to be scoped to a block.
+    ///
+    /// Panics with the same semantics as [`Tape::activate`] if another
+    /// tape is already active on this thread.
+    pub fn activate_guard(&mut self) -> TapeGuard<T> {
+        self.activate();
+        TapeGuard {
+            tape_ptr: self.data_ptr(),
+            _not_send: PhantomData,
+        }
+    }
+
+    /// Begin a fresh recording on this **reused** tape and activate it,
+    /// returning an RAII guard that deactivates on drop. Equivalent to
+    /// [`new_recording`](TapeData::new_recording) followed by
+    /// [`activate_guard`](Tape::activate_guard).
+    ///
+    /// This is the ergonomic way to reuse one tape across many valuations: the
+    /// previous recording's allocation is retained (`new_recording` only
+    /// clears), so a loop over scenarios/positions amortizes tape allocation
+    /// instead of paying a fresh [`Tape::new`] each time. The returned guard holds a raw pointer, not
+    /// a borrow, so the tape stays usable (e.g. for `register_input`) while the
+    /// guard is alive; the guard's `Drop` deactivates the thread-local slot.
+    ///
+    /// ```
+    /// use xad_rs::{AReal, Tape};
+    /// let mut tape = Tape::<f64>::with_capacity(64, 256);
+    /// for &x0 in &[1.0_f64, 2.0, 3.0] {
+    ///     let _rec = tape.record();                 // reuse: clear + activate
+    ///     let mut x = AReal::new(x0);
+    ///     AReal::register_input(std::slice::from_mut(&mut x), &mut tape);
+    ///     let mut y = &x * &x;                       // y = x^2
+    ///     AReal::register_output(std::slice::from_mut(&mut y), &mut tape);
+    ///     y.set_adjoint(&mut tape, 1.0);
+    ///     tape.compute_adjoints();
+    ///     assert!((x.adjoint(&tape) - 2.0 * x0).abs() < 1e-12);
+    /// }                                             // _rec drops -> deactivate
+    /// ```
+    ///
+    /// # Panics
+    /// Panics (like [`activate`](Tape::activate)) if another tape is already
+    /// active on this thread — recordings do not nest.
+    pub fn record(&mut self) -> TapeGuard<T> {
+        self.new_recording();
+        self.activate_guard()
+    }
+}
+
+impl<T: TapeStorage> TapeData<T> {
+    /// Register a variable on the tape and return its slot.
+    ///
+    /// Slots are handed out monotonically from zero and correspond 1:1
+    /// with statements, so this records a zero-operand statement (4 bytes)
+    /// for the new variable — used for inputs and constant outputs, which
+    /// never appear as an op's LHS. The derivatives buffer is deliberately
+    /// **not** grown here — it is materialized in a single `resize` by
+    /// [`compute_adjoints`](TapeData::compute_adjoints) (or on demand by
+    /// [`set_derivative`](TapeData::set_derivative)).
+    #[inline]
+    pub fn register_variable(&mut self) -> u32 {
+        self.push_nullary()
+    }
+
+    /// Fast path: record a statement with **zero** operands (an input or
+    /// constant) and return its fresh LHS slot.
+    #[inline]
+    pub fn push_nullary(&mut self) -> u32 {
+        // NOTE(perf): compute the slot from `len` *before* the push. Deriving
+        // it from the post-push length (`len - 2`) puts the returned slot on
+        // a dependency chain through the push's length update and costs ~25%
+        // when recording onto a reused tape.
+        let slot = (self.statements.len() - 1) as u32;
+        // Hard assert (not debug): the two flag bits in operand slot words
+        // leave 2^30 slot numbers, and a wrapped slot would corrupt the sweep
+        // silently. One predictable compare per statement; measured
+        // invisible on the examples protocol.
+        assert!(
+            slot < Tape::<T>::MAX_VARIABLES,
+            "Tape::push_nullary: a tape holds at most 2^30 variables"
+        );
+        self.statements.push(self.operations.len() as u32);
+        slot
+    }
+
+    /// Fast path: record a statement whose single operand has multiplier
+    /// `+1` (`neg == false`) or `−1` (`neg == true`), encoded as a unit
+    /// operand (see the module docs). An inactive operand (`u32::MAX`) is
+    /// not pushed.
+    #[inline]
+    pub fn push_unary_unit(&mut self, operand_slot: u32, neg: bool) -> u32 {
+        if operand_slot != u32::MAX {
+            let flags = Tape::<T>::UNIT | if neg { Tape::<T>::NEG } else { 0 };
+            self.operations.push(Operation {
+                multiplier: T::zero(),
+                slot: operand_slot | flags,
+            });
+        }
+        self.push_nullary()
+    }
+
+    /// Fast path: record a statement with two unit operands (multipliers
+    /// `±1` given by `neg1` / `neg2`), the unit counterpart of
+    /// [`push_binary`](TapeData::push_binary). Inactive operands are skipped.
+    #[inline]
+    pub fn push_binary_unit(&mut self, s1: u32, neg1: bool, s2: u32, neg2: bool) -> u32 {
+        let len = self.operations.len();
+        self.operations.reserve(2);
+        // SAFETY: as in `push_binary`. The inactive test is on the raw slot,
+        // before the flag bits are OR-ed in, so `u32::MAX` never lands in the
+        // buffer (invariant I3 in `compute_adjoints_to_impl`).
+        unsafe {
+            let p = self.operations.as_mut_ptr().add(len);
+            let f1 = Tape::<T>::UNIT | if neg1 { Tape::<T>::NEG } else { 0 };
+            let f2 = Tape::<T>::UNIT | if neg2 { Tape::<T>::NEG } else { 0 };
+            p.write(Operation {
+                multiplier: T::zero(),
+                slot: s1 | f1,
+            });
+            let n1 = (s1 != u32::MAX) as usize;
+            p.add(n1).write(Operation {
+                multiplier: T::zero(),
+                slot: s2 | f2,
+            });
+            let n = n1 + (s2 != u32::MAX) as usize;
+            self.operations.set_len(len + n);
+        }
+        self.push_nullary()
+    }
+
+    /// Unit-operand counterpart of
+    /// [`push_operands_bounded`](TapeData::push_operands_bounded): each yielded
+    /// `(slot, neg)` is pushed as a unit operand with multiplier `+1`
+    /// (`false`) or `−1` (`true`). Backs the fused `sum`. Same `n_max`
+    /// contract; inactive slots are skipped.
+    #[inline]
+    pub fn push_operands_unit_bounded(
+        &mut self,
+        n_max: usize,
+        operands: impl IntoIterator<Item = (u32, bool)>,
+    ) {
+        let len = self.operations.len();
+        self.operations.reserve(n_max);
+        let mut iter = operands.into_iter();
+        // SAFETY: as in `push_operands_bounded`; the inactive test is on the
+        // raw slot before flagging.
+        unsafe {
+            let p = self.operations.as_mut_ptr().add(len);
+            let mut written = 0usize;
+            for (slot, neg) in iter.by_ref().take(n_max) {
+                let flags = Tape::<T>::UNIT | if neg { Tape::<T>::NEG } else { 0 };
+                p.add(written).write(Operation {
+                    multiplier: T::zero(),
+                    slot: slot | flags,
+                });
+                written += (slot != u32::MAX) as usize;
+            }
+            self.operations.set_len(len + written);
+        }
+        debug_assert!(
+            iter.next().is_none(),
+            "push_operands_unit_bounded: iterator yielded more than n_max operands"
+        );
+    }
+
+    /// Fast path: record a statement with **one** operand and return its
+    /// fresh LHS slot. Avoids any intermediate slice/`Vec` construction.
+    ///
+    /// If `operand_slot` is `u32::MAX`, the operand is treated as inactive
+    /// and is *not* pushed onto the operations buffer.
+    #[inline]
+    pub fn push_unary(&mut self, multiplier: T, operand_slot: u32) -> u32 {
+        // NOTE(perf): a reserve-plus-unconditional-write variant (as in
+        // `push_binary`) measured no better here — one conditional push is
+        // already optimal for a single operand. Keep the simple form.
+        if operand_slot != u32::MAX {
+            self.operations.push(Operation {
+                multiplier,
+                slot: operand_slot,
+            });
+        }
+        self.push_nullary()
+    }
+
+    /// Fast path: record a statement with **two** operands and return its
+    /// fresh LHS slot.
+    ///
+    /// Inactive operands (slot `u32::MAX`) are skipped.
+    #[inline]
+    pub fn push_binary(&mut self, m1: T, s1: u32, m2: T, s2: u32) -> u32 {
+        // NOTE(perf): one `reserve(2)` + branchless unconditional writes
+        // instead of two capacity-checked conditional pushes — worth ~15%
+        // on `record/reused_tape` (~11% on `_large`): the operator hot loop
+        // drops two grow-check branches and the operand stores no longer
+        // depend on the activity tests.
+        let len = self.operations.len();
+        self.operations.reserve(2);
+        // SAFETY: `reserve(2)` guarantees room for both writes past `len`;
+        // `set_len` only exposes the `n` operands that are actually active
+        // (an inactive first operand's write is overwritten or excluded).
+        unsafe {
+            let p = self.operations.as_mut_ptr().add(len);
+            p.write(Operation {
+                multiplier: m1,
+                slot: s1,
+            });
+            let n1 = (s1 != u32::MAX) as usize;
+            p.add(n1).write(Operation {
+                multiplier: m2,
+                slot: s2,
+            });
+            let n = n1 + (s2 != u32::MAX) as usize;
+            self.operations.set_len(len + n);
+        }
+        self.push_nullary()
+    }
+
+    /// Push a single operand of an in-progress **n-ary** statement.
+    ///
+    /// Call once per operand, then close the statement with
+    /// [`end_statement`](TapeData::end_statement). Inactive operands (slot
+    /// `u32::MAX`) are skipped, mirroring [`push_unary`](TapeData::push_unary) /
+    /// [`push_binary`](TapeData::push_binary). Fused recorders
+    /// ([`math::ad::sum`](crate::math::ad::sum),
+    /// [`math::ad::dot`](crate::math::ad::dot), ...) record an
+    /// arbitrary-arity op as **one** statement instead of a chain of binary
+    /// temporaries — shrinking both the statement and operand streams the
+    /// reverse sweep must walk; they push their operands in bulk via
+    /// [`push_operands_bounded`](TapeData::push_operands_bounded), keeping this
+    /// per-operand entry point for callers that don't know their operand
+    /// count up front.
+    #[inline]
+    pub fn push_operand(&mut self, multiplier: T, operand_slot: u32) {
+        if operand_slot != u32::MAX {
+            self.operations.push(Operation {
+                multiplier,
+                slot: operand_slot,
+            });
+        }
+    }
+
+    /// Bulk variant of [`push_operand`](TapeData::push_operand): push the
+    /// operands of an in-progress n-ary statement with a **single**
+    /// capacity reserve and no per-operand grow checks — the
+    /// [`push_binary`](TapeData::push_binary) reserve-plus-unconditional-write
+    /// trick generalized to n operands. Inactive operands (slot `u32::MAX`)
+    /// are skipped, as in the fixed-arity helpers.
+    ///
+    /// `n_max` must be an upper bound on the number of yielded operands
+    /// (the slice-based fused recorders in [`crate::math::ad`] know it
+    /// exactly). Yielding more than `n_max` items is a logic error: it is
+    /// caught by a `debug_assert!`, and in release builds the excess
+    /// operands are dropped.
+    ///
+    /// NOTE(perf): worth −3.3% on a fused `sum` and −2.4% on a fused
+    /// `weighted_dot`, end-to-end versus per-operand `push_operand` calls
+    /// (Apple M-series, rustc 1.92, fat LTO) — those measurements also record
+    /// the input legs and run the sweep, so the fused statement's recording
+    /// itself speeds up by more than the headline.
+    #[inline]
+    pub fn push_operands_bounded(
+        &mut self,
+        n_max: usize,
+        operands: impl IntoIterator<Item = (T, u32)>,
+    ) {
+        let len = self.operations.len();
+        self.operations.reserve(n_max);
+        let mut iter = operands.into_iter();
+        // SAFETY: `reserve(n_max)` guarantees room for `n_max` writes past
+        // `len`, and `take(n_max)` caps the number of writes at `n_max`;
+        // `set_len` only exposes the operands that are actually active (an
+        // inactive operand's write is overwritten by the next active one or
+        // excluded by the final length, as in `push_binary`).
+        unsafe {
+            let p = self.operations.as_mut_ptr().add(len);
+            let mut written = 0usize;
+            for (multiplier, slot) in iter.by_ref().take(n_max) {
+                p.add(written).write(Operation { multiplier, slot });
+                written += (slot != u32::MAX) as usize;
+            }
+            self.operations.set_len(len + written);
+        }
+        debug_assert!(
+            iter.next().is_none(),
+            "push_operands_bounded: iterator yielded more than n_max operands"
+        );
+    }
+
+    /// Close an n-ary statement and return its fresh LHS slot: the operand
+    /// range covers everything pushed via
+    /// [`push_operand`](TapeData::push_operand) since the previous statement.
+    /// With no preceding `push_operand` calls this is identical to
+    /// [`push_nullary`](TapeData::push_nullary).
+    #[inline]
+    pub fn end_statement(&mut self) -> u32 {
+        self.push_nullary()
+    }
+
+    /// Start a new recording, clearing previous data but keeping the tape allocated.
+    ///
+    /// Every `AReal` from the previous recording is invalid afterwards; never
+    /// carry one across. A stale slot past the new recording's end panics in
+    /// the sweep, but one that happens to be in range silently routes its
+    /// adjoint to an unrelated variable.
+    pub fn new_recording(&mut self) {
+        self.statements.clear();
+        self.statements.push(0);
+        self.operations.clear();
+        self.derivatives.clear();
+    }
+
+    /// Compute all adjoints from the end of the tape to the beginning.
+    pub fn compute_adjoints(&mut self) {
+        // Materialize the derivatives buffer for every registered slot.
+        // Recording never grows it (see `register_variable`); seeding via
+        // `set_derivative` may have grown it partially.
+        let num_vars = self.num_variables() as usize;
+        if self.derivatives.len() < num_vars {
+            self.derivatives.resize(num_vars, T::zero());
+        }
+        let end = self.statements.len() as u32;
+        self.compute_adjoints_to_impl(0, end);
+    }
+
+    /// Vector reverse sweep — propagate `n_dir` adjoint directions through the
+    /// recorded tape in a **single pass**. A Jacobian of `f: Rⁿ → Rᵐ` is one
+    /// recording plus one call here with `n_dir = m`, versus `m` scalar sweeps
+    /// (see [`compute_jacobian_rev`](crate::compute_jacobian_rev)).
+    ///
+    /// `derivs` is a caller-owned, **slot-major** buffer of length
+    /// `num_variables * n_dir` (slot `s`, direction `d` at index
+    /// `s * n_dir + d`), pre-seeded with the output adjoints (typically each
+    /// output seeded to `1` in its own direction). On return it holds the
+    /// adjoints of every recorded variable in all `n_dir` directions; read an
+    /// input's gradient row at `input_slot * n_dir + d`.
+    ///
+    /// The scalar [`compute_adjoints`](TapeData::compute_adjoints) path is left
+    /// entirely untouched, so single-direction users pay nothing for the
+    /// existence of vector mode.
+    ///
+    /// # Panics
+    /// Panics if `derivs.len() != num_variables * n_dir`.
+    pub fn compute_adjoints_vector(&self, n_dir: usize, derivs: &mut [T]) {
+        assert_eq!(
+            derivs.len(),
+            self.num_variables() as usize * n_dir,
+            "compute_adjoints_vector: derivs.len() must equal num_variables * n_dir"
+        );
+        if n_dir == 0 {
+            return;
+        }
+
+        // NOTE(perf): three rewrites of this loop have been measured and all
+        // lost to the safe version below — keep it unless a fresh measurement
+        // (including on an LLC-busting tape) says otherwise:
+        //   - `unsafe`/`get_unchecked` (mirroring the scalar sweep), at
+        //     n_dir ∈ {4, 16, 64} over a 768k-operand tape: no measurable
+        //     win — LLVM already elides these checks.
+        //   - raw-pointer rows (`from_raw_parts(_mut)` instead of
+        //     `split_at_mut` + subslices): +2-3% — the slice bounds
+        //     knowledge evidently *helps* the vectorizer.
+        //   - fixed-width direction tiling (`chunks_exact(4)` over the
+        //     row): +56% — the iterator machinery wrecked codegen that was
+        //     already auto-vectorizing cleanly with a runtime trip count.
+        let stmts = self.statements.as_slice();
+        let mut i = stmts.len();
+        while i > 1 {
+            i -= 1;
+            let op_end = stmts[i] as usize;
+            let op_start = stmts[i - 1] as usize;
+            if op_start == op_end {
+                continue;
+            }
+            // NOTE(perf): `black_box` hides from LLVM that `lhs_slot` is an
+            // affine function of the loop counter (before slots were implicit
+            // in statement order, it was a value loaded from the statement,
+            // equally opaque). Letting LLVM see the relation costs ~17% on
+            // a 16-direction vector sweep and ~9% on the scalar sweep,
+            // reproducibly (A/B measured, Apple M-series, rustc 1.92
+            // fat-LTO) — the extra register round-trip is far cheaper than
+            // whatever the optimizer does with the extra knowledge.
+            let lhs_slot = std::hint::black_box(i - 1);
+
+            // The lhs adjoint row is `[lhs_slot*n_dir, lhs_slot*n_dir+n_dir)`.
+            // Every operand slot is strictly less than `lhs_slot` (invariant I5
+            // in `compute_adjoints_to_impl`), so all operand rows lie strictly
+            // below `lhs_slot*n_dir`. Splitting there cleanly separates the read
+            // (lhs row) from the writes (operand rows) — no `unsafe` needed.
+            let split = lhs_slot * n_dir;
+            let (below, from) = derivs.split_at_mut(split);
+            let adj = &from[..n_dir];
+
+            if adj.iter().all(|a| a.is_zero()) {
+                continue;
+            }
+
+            for op in &self.operations[op_start..op_end] {
+                let raw = op.slot;
+                let base = (raw & Tape::<T>::SLOT_MASK) as usize * n_dir;
+                let target = &mut below[base..base + n_dir];
+                if raw & Tape::<T>::UNIT != 0 {
+                    // Unit operand: `±adj`, bit-identical to `(±1)·adj`.
+                    if raw & Tape::<T>::NEG != 0 {
+                        for d in 0..n_dir {
+                            target[d] -= adj[d];
+                        }
+                    } else {
+                        for d in 0..n_dir {
+                            target[d] += adj[d];
+                        }
+                    }
+                } else {
+                    let mult = op.multiplier;
+                    for d in 0..n_dir {
+                        target[d] += mult * adj[d];
+                    }
+                }
+            }
+        }
+    }
+
+    fn compute_adjoints_to_impl(&mut self, target_pos: u32, start: u32) {
+        // Local slices unlock the invariants below for LLVM and let us
+        // bypass bounds-check elision hand-wringing in the inner loop.
+        //
+        // ---------- Invariants relied upon by the `unsafe` code below ----------
+        //
+        // (I1) `self.derivatives.len() >= num_variables`
+        //      (`num_variables == statements.len() - 1`). Established by the
+        //      `resize` in `compute_adjoints` (the only caller) before this
+        //      runs, and re-checked by the hard `assert!` below so the
+        //      `get_unchecked` accesses stay bounded even if a future caller
+        //      skips the resize.
+        //
+        // (I2) Statement index `i` corresponds 1:1 to LHS slot `i - 1`
+        //      (index 0 is the sentinel), so for every visited statement
+        //      `lhs_slot = i - 1 < statements.len() - 1 == num_variables`.
+        //
+        // (I3) Every `Operation.slot`, once masked with `SLOT_MASK`, is
+        //      strictly less than `num_variables` **for a well-formed
+        //      recording**. The push helpers filter `u32::MAX` operands *at
+        //      push time* on the raw slot (before any unit flag is OR-ed
+        //      in), so no sentinel ever lands in the operations buffer. What
+        //      the push helpers cannot see is an `AReal` carried over from
+        //      an earlier recording, whose slot may exceed this recording's
+        //      count — so the operand index below is a *checked* `get_mut`
+        //      (cold panic on failure), not `get_unchecked_mut`. The two
+        //      high bits are the unit-operand flags (see the module docs);
+        //      the slot number itself is below `MAX_VARIABLES = 2^30`.
+        //
+        // (I4) The sweep loop's `while i > target_pos + 1` condition means
+        //      we never visit `i == 0` (the sentinel), so `i - 1` is always
+        //      a valid statement index and a real, live slot.
+        //
+        // (I5) An operand's statement was recorded before the statement that
+        //      consumes it, so a statement's LHS slot is strictly greater
+        //      than any of its (masked) operand slots. `slot == lhs_slot` is
+        //      therefore impossible and there is no write-read aliasing
+        //      hazard on `derivatives` inside the inner loop.
+        //
+        // -----------------------------------------------------------------------
+
+        let stmts = self.statements.as_slice();
+        let ops = self.operations.as_slice();
+        let derivs = self.derivatives.as_mut_slice();
+
+        // Hard assert (not debug): the unchecked derivative accesses below
+        // are only sound if every registered slot has backing storage.
+        assert!(
+            derivs.len() >= stmts.len() - 1,
+            "derivatives buffer must be materialized before the reverse sweep"
+        );
+
+        let mut i = start as usize;
+        let stop = target_pos as usize + 1;
+        while i > stop {
+            i -= 1;
+
+            // SAFETY (I4): `i > stop ≥ 1`, and `i < self.statements.len()`
+            // by construction (`start` was `statements.len()` at the call
+            // site, and we only decrement `i`).
+            let op_end = unsafe { *stmts.get_unchecked(i) as usize };
+            // SAFETY (I4): `i ≥ 1`, so `i - 1` is a valid statement index.
+            let op_start = unsafe { *stmts.get_unchecked(i - 1) as usize };
+            // Nullary statements (inputs, constant outputs) have nothing to
+            // propagate — skip before touching the derivatives buffer.
+            if op_start == op_end {
+                continue;
+            }
+
+            // NOTE(perf): see the matching `black_box` in
+            // `compute_adjoints_vector` — hiding the affine relation between
+            // `lhs_slot` and the loop counter is worth ~9% on `sweep/scalar`.
+            let lhs_slot = std::hint::black_box(i - 1);
+            // SAFETY (I1, I2): `lhs_slot < num_variables <= derivs.len()`.
+            let adjoint = unsafe { *derivs.get_unchecked(lhs_slot) };
+            // `is_zero()` (not `== T::zero()`): for the dual-scalar engine
+            // (`T = Jet1<f64>`) an adjoint can have a zero value but a nonzero
+            // tangent (a real second-order contribution) that must not be
+            // skipped; `Jet1::is_zero` checks both parts. Identical to `== 0`
+            // for `f64`.
+            if adjoint.is_zero() {
+                continue;
+            }
+
+            for j in op_start..op_end {
+                // SAFETY: `op_start..op_end` is a contiguous sub-range of
+                // `ops` because every previously pushed statement's `op_end`
+                // was `self.operations.len()` at push time, which is
+                // monotonically non-decreasing.
+                let op = unsafe { ops.get_unchecked(j) };
+                let raw = op.slot;
+
+                // (I5): the masked slot differs from `lhs_slot`, so there is
+                // no aliasing with the prior `derivs[lhs_slot]` read above.
+                // Checked, not `get_unchecked_mut`: an operand slot from an
+                // earlier recording (an `AReal` kept across `record()` calls)
+                // can exceed `num_variables`, and this is the one place it
+                // would write out of bounds. The compare is against a length
+                // held in a register and the branch is never taken on a valid
+                // tape, so it sits off the store→load chain the sweep is
+                // latency-bound on; measured in `benches/tape_bench.rs`.
+                let slot = (raw & Tape::<T>::SLOT_MASK) as usize;
+                let Some(d) = derivs.get_mut(slot) else {
+                    stale_operand(slot)
+                };
+                // NOTE(perf): the slot word is read first and the multiplier
+                // only on the non-unit branch. For a unit operand `d ± adj`
+                // is bit-identical to `d + (±1)·adj` and takes the multiplier
+                // load and the `fmul` off the store→load chain the sweep is
+                // latency-bound on — measured −15% on the swap's warm reverse
+                // pass and −29% on a 2000-op `acc·x + c` chain (Apple
+                // M-series, rustc 1.92, fat LTO).
+                if raw & Tape::<T>::UNIT != 0 {
+                    if raw & Tape::<T>::NEG != 0 {
+                        *d -= adjoint;
+                    } else {
+                        *d += adjoint;
+                    }
+                } else {
+                    *d += op.multiplier * adjoint;
+                }
+            }
+        }
+    }
+
+    /// Clear all derivative values (adjoints) to zero.
+    pub fn clear_derivatives(&mut self) {
+        for d in self.derivatives.iter_mut() {
+            *d = T::zero();
+        }
+    }
+
+    /// Get the derivative (adjoint) for the given slot.
+    pub fn derivative(&self, slot: u32) -> T {
+        self.derivatives
+            .get(slot as usize)
+            .copied()
+            .unwrap_or_else(T::zero)
+    }
+
+    /// Set the derivative (adjoint) for the given slot.
+    pub fn set_derivative(&mut self, slot: u32, value: T) {
+        if slot as usize >= self.derivatives.len() {
+            self.derivatives.resize(slot as usize + 1, T::zero());
+        }
+        self.derivatives[slot as usize] = value;
+    }
+
+    /// Number of registered variables.
+    pub fn num_variables(&self) -> u32 {
+        (self.statements.len() - 1) as u32
+    }
+
+    /// Number of recorded operations.
+    pub fn num_operations(&self) -> usize {
+        self.operations.len()
+    }
+
+    /// Number of recorded statements (one per registered variable,
+    /// including the zero-operand statements recorded for inputs).
+    pub fn num_statements(&self) -> usize {
+        self.statements.len() - 1
+    }
+
+    /// Approximate memory usage in bytes.
+    pub fn memory(&self) -> usize {
+        self.statements.capacity() * std::mem::size_of::<u32>()
+            + self.operations.capacity() * std::mem::size_of::<Operation<T>>()
+            + self.derivatives.capacity() * std::mem::size_of::<T>()
+    }
+}
+
+/// Cold path of the sweep's operand check — see `compute_adjoints_to_impl`.
+#[cold]
+#[inline(never)]
+fn stale_operand(slot: usize) -> ! {
+    panic!(
+        "Tape: operand slot {slot} is not on this recording \
+         (an AReal from an earlier recording was reused?)"
+    )
+}
+
+impl<T: TapeStorage> Drop for Tape<T> {
+    fn drop(&mut self) {
+        self.deactivate();
+    }
+}
+
+/// RAII guard returned by [`Tape::activate_guard`]. On drop, if the
+/// guard's tape is still the active tape on this thread, the
+/// thread-local active-tape pointer is cleared.
+///
+/// The guard is `!Send` (and therefore `!Sync`) because tape activation
+/// is thread-local. If the guard outlives the `Tape<T>` it was created
+/// from, the tape's own `Drop` will have already cleared the active
+/// pointer, and the guard's `Drop` becomes a no-op — safe by
+/// construction. Tape A's guard cannot accidentally deactivate tape B.
+pub struct TapeGuard<T: TapeStorage> {
+    tape_ptr: *mut TapeData<T>,
+    _not_send: PhantomData<*mut ()>,
+}
+
+impl<T: TapeStorage> Drop for TapeGuard<T> {
+    fn drop(&mut self) {
+        if T::get_active_ptr() == Some(self.tape_ptr) {
+            T::set_active_ptr(None);
+        }
+    }
+}

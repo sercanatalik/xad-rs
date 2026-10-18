@@ -1,0 +1,35 @@
+//! Composite AD operations: first-order drivers, Jacobian, and Hessian
+//! computations.
+//!
+//! Higher-level wrappers that orchestrate the modes in [`crate::forward`]
+//! and [`crate::reverse`] to produce the canonical derivative objects
+//! (`J ∈ R^{m × n}`, `H ∈ R^{n × n}`) without users wiring tapes or
+//! seed matrices by hand. Both Hessian entry points are **exact** (no
+//! finite-difference error): `compute_full_hessian` runs one dense
+//! `Jet2Vec` forward pass; `compute_hessian` runs `n` forward-over-adjoint
+//! sweeps (`AReal<Jet1<f64>>`), one per input direction — and
+//! `compute_hessian_k` widens the storage scalar to `K` tangent lanes so
+//! the same exact result takes `⌈n/K⌉` passes, with `compute_hessian_k_par`
+//! distributing those independent blocks across a `rayon` worker pool.
+//! All three produce bit-identical results.
+//!
+//! [`derivative`] adds the first-order shapes those drivers do not serve — a
+//! scalar derivative and a directional derivative in forward mode, a gradient
+//! in `⌈n/K⌉` K-lane forward passes, and a gradient from one reverse sweep —
+//! so callers manage no tape by hand.
+//!
+//! See also (theory): `docs/theory/04-second-order-and-k-jets.md` in the crate archive.
+
+pub mod derivative;
+pub mod hessian;
+pub mod jacobian;
+
+pub use derivative::{
+    compute_derivative_fwd, compute_directional_derivative_fwd, compute_gradient_fwd_k,
+    compute_gradient_rev, compute_gradient_rev_with,
+};
+pub use hessian::{
+    DenseHessian, compute_full_hessian, compute_hessian, compute_hessian_k, compute_hessian_k_par,
+    compute_hessian_k_with, compute_hessian_with,
+};
+pub use jacobian::{compute_jacobian_rev, compute_jacobian_rev_with};
